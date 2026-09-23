@@ -45,6 +45,14 @@ from icalendar.error import (
     JCalParsingError,
     LocalTimezoneMissing,
 )
+from icalendar.freebusy import (
+    DEFAULT_FBTYPE_PRIORITY,
+    FBTYPE_UNKNOWN,
+    FreeBusyReport,
+    FreeBusySegment,
+    FreeBusySource,
+    synthesize_freebusy,
+)
 
 # Parameters and helper methods for splitting and joining string with escaped
 # chars.
@@ -102,7 +110,9 @@ __all__ = [
     "BUSYTYPE",
     "CLASS",
     "CUTYPE",
+    "DEFAULT_FBTYPE_PRIORITY",
     "FBTYPE",
+    "FBTYPE_UNKNOWN",
     "PARTSTAT",
     "RANGE",
     "RELATED",
@@ -128,6 +138,9 @@ __all__ = [
     "Event",
     "FeatureWillBeRemovedInFutureVersion",
     "FreeBusy",
+    "FreeBusyReport",
+    "FreeBusySegment",
+    "FreeBusySource",
     "GloballyUniqueTZIDGuessed",
     "ICalParsingError",
     "Image",
@@ -150,6 +163,7 @@ __all__ = [
     "is_utc",
     "q_join",
     "q_split",
+    "synthesize_freebusy",
     "use_pytz",
     "use_zoneinfo",
     "vAdr",
