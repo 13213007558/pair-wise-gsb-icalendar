@@ -26,6 +26,7 @@ Submodules
    icalendar.config
    icalendar.enums
    icalendar.error
+   icalendar.free_busy_synthesis
    icalendar.param
    icalendar.parser_tools
    icalendar.tools
