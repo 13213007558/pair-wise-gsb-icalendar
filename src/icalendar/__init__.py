@@ -17,6 +17,7 @@ from icalendar.cal import (
     TimezoneDaylight,
     TimezoneStandard,
     Todo,
+    merge_calendars,
 )
 from icalendar.enums import (
     BUSYTYPE,
@@ -148,6 +149,7 @@ __all__ = [
     "__version__",
     "__version_tuple__",
     "is_utc",
+    "merge_calendars",
     "q_join",
     "q_split",
     "use_pytz",

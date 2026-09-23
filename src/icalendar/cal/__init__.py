@@ -14,6 +14,7 @@ from .event import Event
 from .free_busy import FreeBusy
 from .journal import Journal
 from .lazy import LazyCalendar
+from .merge import merge_calendars
 from .timezone import Timezone, TimezoneDaylight, TimezoneStandard
 from .todo import Todo
 
@@ -32,4 +33,5 @@ __all__ = [
     "TimezoneDaylight",
     "TimezoneStandard",
     "Todo",
+    "merge_calendars",
 ]
