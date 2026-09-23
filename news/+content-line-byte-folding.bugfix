@@ -1,0 +1,9 @@
+Content lines are now unfolded on the raw bytes before decoding, so a fold
+point can no longer split a multi-byte UTF-8 character (e.g. Chinese text
+or emoji in ``DESCRIPTION``) into orphaned continuation bytes. Illegal
+folding, bare carriage returns, unclosed quotation marks, and invalid
+UTF-8 now raise :class:`~icalendar.error.ParseError` with the offset of
+the problem in strict mode, while the lenient default keeps its existing
+tolerance. Parameter parsing distinguishes quoted and unquoted tokens, and
+the backslash escaping of property values stays separate from the quoting
+of parameter values.

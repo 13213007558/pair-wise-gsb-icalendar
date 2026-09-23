@@ -16,6 +16,34 @@ class InvalidCalendar(ValueError):
     """
 
 
+class ParseError(ValueError):
+    """A content line or parameter string could not be parsed.
+
+    This is raised for malformed input at the content-line level, such as
+    illegal line folding, a bare carriage return, an unclosed quotation
+    mark, or invalid UTF-8.
+
+    The ``offset`` attribute gives the 0-based position in the parsed
+    input at which the problem was detected, when known. For ``bytes``
+    input it is a byte offset, otherwise it is a character offset.
+    """
+
+    def __init__(self, message: str, offset: int | None = None) -> None:
+        """Create a new ParseError.
+
+        Parameters:
+            message: A description of the parse problem.
+            offset: The 0-based position in the input where the problem
+                was detected, or ``None`` if it is unknown.
+        """
+        self.message = message
+        self.offset = offset
+        full_message = message
+        if offset is not None:
+            full_message = f"{message} (offset {offset})"
+        super().__init__(full_message)
+
+
 class ICalParsingError(InvalidCalendar):
     """Could not parse an iCalendar."""
 
@@ -356,4 +384,5 @@ __all__ = [
     "InvalidCalendar",
     "JCalParsingError",
     "LocalTimezoneMissing",
+    "ParseError",
 ]

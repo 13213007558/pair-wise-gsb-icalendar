@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from icalendar.caselessdict import CaselessDict
 from icalendar.compatibility import deprecate_for_version_8
-from icalendar.error import JCalParsingError
+from icalendar.error import JCalParsingError, ParseError
 from icalendar.parser.string import validate_token
 from icalendar.parser_tools import (
     DEFAULT_ENCODING,
@@ -190,6 +190,27 @@ def q_join(lst: Sequence[str], sep: str = ",", always_quote: bool = False) -> st
     return sep.join(dquote(itm, always_quote=always_quote) for itm in lst)
 
 
+def _check_unclosed_quote(st: str) -> None:
+    """Raise a ParseError if a quotation mark is left open.
+
+    Quoted and unquoted parameter values are tokenized differently, so a
+    quotation mark that is never closed would silently change how the
+    remaining separators are interpreted. The reported offset points at
+    the quotation mark that opened the unterminated section.
+    """
+    in_quotes = False
+    quote_offset = 0
+    for i, char in enumerate(st):
+        if char == '"':
+            in_quotes = not in_quotes
+            if in_quotes:
+                quote_offset = i
+    if in_quotes:
+        raise ParseError(
+            "Unclosed quotation mark in parameter string", offset=quote_offset
+        )
+
+
 def _single_string_parameter(func: Callable | None = None, upper=False):
     """Create a parameter getter/setter for a single string parameter.
 
@@ -349,6 +370,7 @@ class Parameters(CaselessDict):
         """Parses the parameter format from ical text format."""
 
         # parse into strings
+        _check_unclosed_quote(st)
         result = cls()
         for param in q_split(st, ";"):
             try:

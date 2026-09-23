@@ -2,6 +2,7 @@
 
 import re
 
+from icalendar.error import ParseError
 from icalendar.parser.parameter import Parameters
 from icalendar.parser.property import unescape_backslash, unescape_list_or_string
 from icalendar.parser.string import (
@@ -18,6 +19,7 @@ from icalendar.parser_tools import DEFAULT_ENCODING, ICAL_TYPE, to_unicode
 # to the first line break of a run, making a failed attempt O(1) instead of a
 # full rescan, while matching exactly the same strings.
 UFOLD = re.compile(r"(?:(?<!\n)\r\n|(?<![\r\n])\n)(?:\r?\n)*[ \t]")
+UFOLD_BYTES = re.compile(rb"(?:(?<!\n)\r\n|(?<![\r\n])\n)(?:\r?\n)*[ \t]")
 NEWLINE = re.compile(r"\r?\n")
 
 OWS = " \t"
@@ -114,6 +116,56 @@ def _strip_ows_around_delimiters(st: str, delimiters: str = ";=") -> str:
     return "".join(out).strip()
 
 
+def _validate_line_breaks(data: str | bytes) -> None:
+    """Raise a ParseError for line breaks that are not CRLF.
+
+    :rfc:`5545#section-3.1` delimits content lines with CRLF, so a bare
+    carriage return or a bare line feed is invalid in strict parsing.
+    The reported offset is a byte offset for ``bytes`` input and a
+    character offset for ``str`` input.
+    """
+    cr = b"\r" if isinstance(data, bytes) else "\r"
+    lf = b"\n" if isinstance(data, bytes) else "\n"
+    for i in range(len(data)):
+        char = data[i : i + 1]
+        if char == cr and data[i + 1 : i + 2] != lf:
+            raise ParseError("Bare carriage return in content line", offset=i)
+        if char == lf and data[i - 1 : i] != cr:
+            raise ParseError("Bare line feed in content line", offset=i)
+
+
+def _unfold_and_decode(data: str | bytes, strict: bool = False) -> str:
+    """Unfold content lines and return them as text.
+
+    Folding is defined on the octet stream (:rfc:`5545#section-3.1`), so
+    for ``bytes`` input the fold markers (CRLF followed by a space or
+    tab) are removed before decoding. A fold point can therefore never
+    split a multi-byte UTF-8 character into orphaned continuation bytes,
+    and the unfolded value is preserved exactly.
+
+    In strict mode, line breaks that are not CRLF and invalid UTF-8 raise
+    a :class:`~icalendar.error.ParseError` with the offset of the
+    problem. In lenient mode, the historical tolerance is kept: bare line
+    feeds unfold as before and undecodable bytes are replaced.
+    """
+    if isinstance(data, bytes):
+        if strict:
+            _validate_line_breaks(data)
+        unfolded = UFOLD_BYTES.sub(b"", data)
+        try:
+            return unfolded.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            if strict:
+                raise ParseError(
+                    "Content line is not valid UTF-8", offset=exc.start
+                ) from exc
+            return unfolded.decode("utf-8-sig", "replace")
+    data = to_unicode(data)
+    if strict:
+        _validate_line_breaks(data)
+    return UFOLD.sub("", data)
+
+
 class Contentline(str):
     r"""A content line is a string that can be folded and parsed into parts.
 
@@ -185,10 +237,13 @@ class Contentline(str):
             value_split: int | None = None
             in_quotes: bool = False
             escaped: bool = False
+            quote_offset: int | None = None
 
             for i, ch in enumerate(self):
                 if ch == '"' and not escaped:
                     in_quotes = not in_quotes
+                    if in_quotes:
+                        quote_offset = i
                 elif ch == "\\" and not in_quotes:
                     escaped = True
                     continue
@@ -201,6 +256,15 @@ class Contentline(str):
                         value_split = i
 
                 escaped = False
+
+            if in_quotes and value_split is None:
+                # A quotation mark in the name or parameter section was
+                # never closed, so it swallowed the value separator.
+                # An unbalanced quotation mark after the value separator
+                # is part of the value and left untouched.
+                raise ParseError(  # noqa: TRY301
+                    "Unclosed quotation mark in content line", offset=quote_offset
+                )
 
             # Validate parsing results
             if not value_split:
@@ -229,6 +293,8 @@ class Contentline(str):
                 for key, value in iter(params.items())
             )
             values = self[value_split + 1 :]
+        except ParseError:
+            raise
         except ValueError as exc:
             raise ValueError(
                 f"Content line could not be parsed into parts: '{self}': {exc}"
@@ -286,10 +352,14 @@ class Contentline(str):
 
     @classmethod
     def from_ical(cls, ical, strict=False):
-        """Unfold the content lines in an iCalendar into long content lines."""
-        ical = to_unicode(ical)
-        # a fold is carriage return followed by either a space or a tab
-        return cls(UFOLD.sub("", ical), strict=strict)
+        """Unfold the content lines in an iCalendar into long content lines.
+
+        Folding is removed on the raw bytes before decoding, so multi-byte
+        UTF-8 characters are never split at a fold point. In strict mode,
+        illegal line breaks and invalid UTF-8 raise
+        :class:`~icalendar.error.ParseError` with an offset.
+        """
+        return cls(_unfold_and_decode(ical, strict=strict), strict=strict)
 
     def to_ical(self):
         """Long content lines are folded so they are less than 75 characters
@@ -309,14 +379,19 @@ class Contentlines(list[Contentline]):
         return b"\r\n".join(line.to_ical() for line in self if line) + b"\r\n"
 
     @classmethod
-    def from_ical(cls, st):
+    def from_ical(cls, st, strict=False):
         """Parses a string into content lines."""
-        st = to_unicode(st)
         try:
             # a fold is carriage return followed by either a space or a tab
-            unfolded = UFOLD.sub("", st)
-            lines = cls(Contentline(line) for line in NEWLINE.split(unfolded) if line)
+            unfolded = _unfold_and_decode(st, strict=strict)
+            lines = cls(
+                Contentline(line, strict=strict)
+                for line in NEWLINE.split(unfolded)
+                if line
+            )
             lines.append("")  # '\r\n' at the end of every content line
+        except ParseError:
+            raise
         except Exception as e:
             raise ValueError("Expected StringType with content lines") from e
         return lines
