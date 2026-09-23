@@ -45,6 +45,7 @@ from icalendar.error import (
     JCalParsingError,
     LocalTimezoneMissing,
 )
+from icalendar.lossless import LosslessDocument, LosslessEditingError
 
 # Parameters and helper methods for splitting and joining string with escaped
 # chars.
@@ -138,6 +139,8 @@ __all__ = [
     "Journal",
     "LazyCalendar",
     "LocalTimezoneMissing",
+    "LosslessDocument",
+    "LosslessEditingError",
     "NFields",
     "Parameters",
     "Timezone",

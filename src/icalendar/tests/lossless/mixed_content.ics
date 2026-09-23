@@ -1,0 +1,22 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example Corp//Lossless Editing Test//EN
+X-WR-CALNAME:Team Calendar
+BEGIN:VEVENT
+UID:lossless-001@example.com
+DTSTAMP:20260922T080000Z
+DTSTART:20261001T090000Z
+SUMMARY:Team sync\, Q3 planning
+DESCRIPTION:Weekly sync with a long description that is folded across
+ two physical lines using CRLF and a space.
+CATEGORIES:Work\,Internal,Planning
+ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN="Doe, John":mailto:jd@example.com
+ATTENDEE;ROLE=OPT-PARTICIPANT;CN=Jane;DELEGATED-TO="mailto:a@example.com","mailto:b@example.com":mailto:jane@example.com
+X-ALT;ALTREP="cid:part1.0001@example.org":The Fall'98 Wildfire
+X-CUSTOM-PROP;X-FOO=bar:First part of a long unknown value that keeps going
+	on the next physical line with LF and a tab
+X-CHINESE-NOTE:这是一段需要折行的中文备注，
+ 用来验证未知属性在编辑后保持字节不变。
+x-mixed-case;X-ParaM=Kept:Some Value
+END:VEVENT
+END:VCALENDAR

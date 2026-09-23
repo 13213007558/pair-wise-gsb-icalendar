@@ -1,0 +1,3 @@
+# The fixtures in this directory intentionally mix CRLF and LF line
+# endings; git must not normalize them.
+*.ics -text
