@@ -6,6 +6,8 @@ It is stupid in the sense that it treats the content purely as strings. No type
 conversion is attempted.
 """
 
+from icalendar.error import ParseError
+
 from .content_line import Contentline, Contentlines
 from .parameter import (
     Parameters,
@@ -41,6 +43,7 @@ __all__ = [
     "Contentline",
     "Contentlines",
     "Parameters",
+    "ParseError",
     "_escape_char",
     "_escape_string",
     "_foldline",

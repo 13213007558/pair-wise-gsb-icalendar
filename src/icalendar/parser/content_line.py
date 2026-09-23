@@ -2,6 +2,7 @@
 
 import re
 
+from icalendar.error import ParseError
 from icalendar.parser.parameter import Parameters
 from icalendar.parser.property import unescape_backslash, unescape_list_or_string
 from icalendar.parser.string import (
@@ -19,6 +20,104 @@ from icalendar.parser_tools import DEFAULT_ENCODING, ICAL_TYPE, to_unicode
 # full rescan, while matching exactly the same strings.
 UFOLD = re.compile(r"(?:(?<!\n)\r\n|(?<![\r\n])\n)(?:\r?\n)*[ \t]")
 NEWLINE = re.compile(r"\r?\n")
+
+# Byte-level equivalent of UFOLD: folding is defined on the encoded octet
+# stream, so bytes are unfolded before they are decoded.
+UFOLD_BYTES = re.compile(rb"(?:(?<!\n)\r\n|(?<![\r\n])\n)(?:\r?\n)*[ \t]")
+
+# In strict mode only a CRLF followed by a single space or tab is a fold.
+FOLD_STRICT = re.compile(r"\r\n[ \t]")
+FOLD_STRICT_BYTES = re.compile(rb"\r\n[ \t]")
+
+# A CR must be followed by an LF and an LF must be preceded by a CR.
+INVALID_LINE_BREAK = re.compile(r"\r(?!\n)|(?<!\r)\n")
+INVALID_LINE_BREAK_BYTES = re.compile(rb"\r(?!\n)|(?<!\r)\n")
+
+
+def _check_line_breaks(data: str | bytes) -> None:
+    """Validate that every line break in ``data`` is a CRLF.
+
+    Raises:
+        ParseError: If a bare CR or a bare LF is found. The ``offset``
+            attribute carries the position of the offending byte or
+            character.
+    """
+    if isinstance(data, str):
+        pattern = INVALID_LINE_BREAK
+        cr = "\r"
+    else:
+        pattern = INVALID_LINE_BREAK_BYTES
+        cr = 0x0D
+    match = pattern.search(data)
+    if match is None:
+        return
+    if data[match.start()] == cr:
+        raise ParseError(
+            "Invalid line break: CR must be followed by LF",
+            offset=match.start(),
+        )
+    raise ParseError(
+        "Invalid line break: LF must be preceded by CR",
+        offset=match.start(),
+    )
+
+
+def _unfold(data: str | bytes, strict: bool = False) -> str | bytes:
+    """Unfold content lines as defined in :rfc:`5545#section-3.1`.
+
+    A fold is a CRLF immediately followed by a single space or tab.
+    Unfolding ``bytes`` before decoding them keeps multi-byte UTF-8
+    characters that straddle a fold point intact.
+
+    In lenient mode (``strict=False``) lone LF line breaks and runs of
+    empty folded lines are tolerated, as before. In strict mode every
+    line break must be a CRLF and only CRLF + WSP is unfolded.
+    """
+    if isinstance(data, bytes):
+        if strict:
+            _check_line_breaks(data)
+            return FOLD_STRICT_BYTES.sub(b"", data)
+        return UFOLD_BYTES.sub(b"", data)
+    if strict:
+        _check_line_breaks(data)
+        return FOLD_STRICT.sub("", data)
+    return UFOLD.sub("", data)
+
+
+def _original_offset(data: bytes, unfolded_offset: int) -> int:
+    """Map an offset in unfolded bytes back to its offset in ``data``."""
+    removed = 0
+    for match in FOLD_STRICT_BYTES.finditer(data):
+        if match.start() - removed > unfolded_offset:
+            break
+        removed += match.end() - match.start()
+    return unfolded_offset + removed
+
+
+def _unfold_and_decode(data: str | bytes, strict: bool = False) -> str:
+    """Unfold ``data`` and return it as ``str``.
+
+    Bytes are unfolded before they are decoded so that a fold point
+    inside a multi-byte UTF-8 character does not corrupt it. In lenient
+    mode invalid UTF-8 is replaced as before; in strict mode it raises.
+
+    Raises:
+        ParseError: In strict mode, if a line break is not a CRLF or the
+            bytes are not valid UTF-8.
+    """
+    if isinstance(data, bytes):
+        unfolded = _unfold(data, strict=strict)
+        if strict:
+            try:
+                return unfolded.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise ParseError(
+                    f"Invalid UTF-8: {exc.reason}",
+                    offset=_original_offset(data, exc.start),
+                ) from exc
+        return unfolded.decode("utf-8-sig", "replace")
+    return _unfold(data, strict=strict)
+
 
 OWS = " \t"
 # ``[ \t]*([;=])[ \t]*`` in one pass rescans a long whitespace run at every
@@ -185,10 +284,12 @@ class Contentline(str):
             value_split: int | None = None
             in_quotes: bool = False
             escaped: bool = False
+            quote_start: int | None = None
 
             for i, ch in enumerate(self):
                 if ch == '"' and not escaped:
                     in_quotes = not in_quotes
+                    quote_start = i if in_quotes else None
                 elif ch == "\\" and not in_quotes:
                     escaped = True
                     continue
@@ -203,6 +304,13 @@ class Contentline(str):
                 escaped = False
 
             # Validate parsing results
+            if in_quotes and value_split is None:
+                # A quote opened in the parameter section was never
+                # closed, so the value separator could not be found.
+                raise ParseError(  # noqa: TRY301
+                    "Unclosed quoted string in content line parameters",
+                    offset=quote_start,
+                )
             if not value_split:
                 # No colon found - value is empty, use end of string
                 value_split = len(self)
@@ -229,6 +337,9 @@ class Contentline(str):
                 for key, value in iter(params.items())
             )
             values = self[value_split + 1 :]
+        except ParseError:
+            # Keep the precise offset instead of wrapping it.
+            raise
         except ValueError as exc:
             raise ValueError(
                 f"Content line could not be parsed into parts: '{self}': {exc}"
@@ -286,10 +397,16 @@ class Contentline(str):
 
     @classmethod
     def from_ical(cls, ical, strict=False):
-        """Unfold the content lines in an iCalendar into long content lines."""
-        ical = to_unicode(ical)
-        # a fold is carriage return followed by either a space or a tab
-        return cls(UFOLD.sub("", ical), strict=strict)
+        """Unfold the content lines in an iCalendar into long content lines.
+
+        Bytes are unfolded before they are decoded, so a fold point inside
+        a multi-byte UTF-8 character does not corrupt the character.
+
+        Raises:
+            ParseError: In strict mode, if a line break is not a CRLF or
+                the bytes are not valid UTF-8.
+        """
+        return cls(_unfold_and_decode(ical, strict=strict), strict=strict)
 
     def to_ical(self):
         """Long content lines are folded so they are less than 75 characters
@@ -309,14 +426,28 @@ class Contentlines(list[Contentline]):
         return b"\r\n".join(line.to_ical() for line in self if line) + b"\r\n"
 
     @classmethod
-    def from_ical(cls, st):
-        """Parses a string into content lines."""
-        st = to_unicode(st)
+    def from_ical(cls, st, strict=False):
+        """Parses a string into content lines.
+
+        Bytes are unfolded before they are decoded, so a fold point inside
+        a multi-byte UTF-8 character does not corrupt the character.
+
+        Raises:
+            ParseError: In strict mode, if a line break is not a CRLF or
+                the bytes are not valid UTF-8.
+        """
         try:
             # a fold is carriage return followed by either a space or a tab
-            unfolded = UFOLD.sub("", st)
-            lines = cls(Contentline(line) for line in NEWLINE.split(unfolded) if line)
+            unfolded = _unfold_and_decode(st, strict=strict)
+            lines = cls(
+                Contentline(line, strict=strict)
+                for line in NEWLINE.split(unfolded)
+                if line
+            )
             lines.append("")  # '\r\n' at the end of every content line
+        except ParseError:
+            # Keep the precise offset instead of wrapping it.
+            raise
         except Exception as e:
             raise ValueError("Expected StringType with content lines") from e
         return lines

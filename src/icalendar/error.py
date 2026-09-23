@@ -16,6 +16,22 @@ class InvalidCalendar(ValueError):
     """
 
 
+class ParseError(ValueError):
+    """A content line or iCalendar stream could not be parsed.
+
+    The ``offset`` attribute gives the position in the input at which the
+    problem was detected: a byte offset for ``bytes`` input and a character
+    offset for ``str`` input. It is ``None`` when no position is known.
+    """
+
+    def __init__(self, message: str, offset: int | None = None) -> None:
+        self.message = message
+        self.offset = offset
+        if offset is not None:
+            message = f"{message} (at offset {offset})"
+        super().__init__(message)
+
+
 class ICalParsingError(InvalidCalendar):
     """Could not parse an iCalendar."""
 
@@ -356,4 +372,5 @@ __all__ = [
     "InvalidCalendar",
     "JCalParsingError",
     "LocalTimezoneMissing",
+    "ParseError",
 ]

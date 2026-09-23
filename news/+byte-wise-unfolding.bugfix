@@ -1,0 +1,7 @@
+Content lines are now unfolded on the encoded byte stream before decoding,
+so a fold point inside a multi-byte UTF-8 character (for example a CJK
+character or an emoji) no longer corrupts the value. In strict mode,
+illegal folds, bare carriage returns, unclosed quotes and invalid UTF-8
+raise a ``ParseError`` carrying the offset of the problem; lenient mode
+keeps its established tolerance. Quoted parameter tokens are now matched
+as exactly one pair of double quotes.

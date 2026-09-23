@@ -358,8 +358,11 @@ class Parameters(CaselessDict):
                 # strings are case insensitive.
                 vals = []
                 for v in q_split(val, ","):
-                    if v.startswith('"') and v.endswith('"'):
-                        v2 = v.strip('"')
+                    if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+                        # A quoted token is exactly one pair of double
+                        # quotes; anything else falls through to the
+                        # stricter unquoted validation below.
+                        v2 = v[1:-1]
                         validate_param_value(v2, quoted=True)
                         vals.append(rfc_6868_unescape(v2))
                     else:
