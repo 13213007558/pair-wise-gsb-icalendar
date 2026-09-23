@@ -45,6 +45,14 @@ from icalendar.error import (
     JCalParsingError,
     LocalTimezoneMissing,
 )
+from icalendar.itip import (
+    ITIPConflict,
+    ITIPEntry,
+    ITIPInbox,
+    ITIPResult,
+    ITIPStatus,
+    UnsupportedITIPMessage,
+)
 
 # Parameters and helper methods for splitting and joining string with escaped
 # chars.
@@ -134,6 +142,11 @@ __all__ = [
     "IncompleteAlarmInformation",
     "IncompleteComponent",
     "InvalidCalendar",
+    "ITIPConflict",
+    "ITIPEntry",
+    "ITIPInbox",
+    "ITIPResult",
+    "ITIPStatus",
     "JCalParsingError",
     "Journal",
     "LazyCalendar",
@@ -145,6 +158,7 @@ __all__ = [
     "TimezoneStandard",
     "Todo",
     "TypesFactory",
+    "UnsupportedITIPMessage",
     "__version__",
     "__version_tuple__",
     "is_utc",
