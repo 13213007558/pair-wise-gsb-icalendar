@@ -1,6 +1,9 @@
 from icalendar.alarms import (
     Alarms,
     AlarmTime,
+    LocationEvent,
+    Proximity,
+    ProximityTrigger,
 )
 from icalendar.cal import (
     Alarm,
@@ -140,6 +143,9 @@ __all__ = [
     "LocalTimezoneMissing",
     "NFields",
     "Parameters",
+    "LocationEvent",
+    "Proximity",
+    "ProximityTrigger",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",

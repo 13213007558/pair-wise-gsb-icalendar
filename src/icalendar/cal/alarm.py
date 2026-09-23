@@ -201,6 +201,35 @@ class Alarm(Component):
     """,
     )
 
+    PROXIMITY = single_string_property(
+        "PROXIMITY",
+        """The proximity value that defines how this alarm is triggered by location.
+
+    This implements the ``PROXIMITY`` property defined in :rfc:`9074#section-4.2`.
+
+    The value is either ``"ARRIVE"`` or ``"DEPART"`` and indicates whether the
+    alarm fires when the user arrives at or departs from the location given by
+    the ``VLOCATION`` subcomponent of this alarm. The empty string is returned
+    when no ``PROXIMITY`` property is present, meaning the alarm is purely
+    time-based.
+
+    Example:
+        Create an alarm that fires when arriving at the office.
+
+        .. code-block:: pycon
+
+            >>> from icalendar import Alarm
+            >>> alarm = Alarm()
+            >>> alarm.PROXIMITY = "ARRIVE"
+            >>> alarm.PROXIMITY == "ARRIVE"
+            True
+
+    See also:
+        :class:`icalendar.alarms.Proximity`, which computes location-based
+        triggers for alarms with this property.
+    """,
+    )
+
     TRIGGER = create_single_property(
         "TRIGGER",
         "dt",
