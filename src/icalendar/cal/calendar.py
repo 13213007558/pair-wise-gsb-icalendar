@@ -19,6 +19,10 @@ from icalendar.attr import (
     url_property,
 )
 from icalendar.cal.component import Component
+from icalendar.cal.dependency import (
+    TodoDependencyAnalysis,
+    analyze_todo_dependencies,
+)
 from icalendar.cal.examples import get_example
 from icalendar.cal.timezone import Timezone
 from icalendar.error import IncompleteComponent
@@ -204,6 +208,26 @@ class Calendar(Component):
         Use :meth:`Component.add_component <icalendar.cal.component.Component.add_component>`.
         """
         return self.walk("VTODO")
+
+    def analyze_todo_dependencies(
+        self, now: datetime | None = None
+    ) -> TodoDependencyAnalysis:
+        """Analyze the dependency graph of the VTODO components.
+
+        This is a read-only shortcut for
+        :func:`icalendar.cal.dependency.analyze_todo_dependencies`:
+        the calendar is not modified and recurring tasks are not expanded.
+
+        Parameters:
+            now: The point in time used to decide which tasks can start.
+                Defaults to the current time.
+
+        Returns:
+            A :class:`~icalendar.cal.dependency.TodoDependencyAnalysis`
+            with the problems found, a topological execution order and
+            the currently executable tasks.
+        """
+        return analyze_todo_dependencies(self, now=now)
 
     @property
     def journals(self) -> list[Journal]:

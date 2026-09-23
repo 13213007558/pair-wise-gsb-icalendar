@@ -17,6 +17,9 @@ from icalendar.cal import (
     TimezoneDaylight,
     TimezoneStandard,
     Todo,
+    TodoDependencyAnalysis,
+    UnknownDependencyReference,
+    analyze_todo_dependencies,
 )
 from icalendar.enums import (
     BUSYTYPE,
@@ -144,9 +147,12 @@ __all__ = [
     "TimezoneDaylight",
     "TimezoneStandard",
     "Todo",
+    "TodoDependencyAnalysis",
     "TypesFactory",
+    "UnknownDependencyReference",
     "__version__",
     "__version_tuple__",
+    "analyze_todo_dependencies",
     "is_utc",
     "q_join",
     "q_split",
