@@ -201,6 +201,51 @@ class Alarm(Component):
     """,
     )
 
+    PROXIMITY = single_string_property(
+        "PROXIMITY",
+        """Whether the alarm is triggered by proximity to a location.
+
+    This implements the `PROXIMITY` property defined in
+    :rfc:`9074#section-6.1`. When set, the alarm fires when the user
+    arrives at or departs from one of the alarm's :attr:`locations`
+    instead of firing at the time given by :attr:`TRIGGER`. The
+    `TRIGGER` property is still required by :rfc:`5545` but its value
+    is ignored for proximity alarms.
+
+    Values are `"ARRIVE"` (default) and `"DEPART"`. The empty string
+    is returned when no `PROXIMITY` property is present, meaning the
+    alarm is a regular time-based alarm.
+
+    Example:
+        Create an alarm that fires when arriving at the office.
+
+        .. code-block:: pycon
+
+            >>> from icalendar import Alarm
+            >>> alarm = Alarm()
+            >>> alarm.PROXIMITY = "ARRIVE"
+            >>> alarm.PROXIMITY
+            vText(b'ARRIVE')
+
+    See also:
+        :attr:`locations`, :meth:`icalendar.alarms.Alarms.proximity_triggers`
+    """,
+    )
+
+    @property
+    def locations(self) -> list[Component]:
+        """The `VLOCATION` subcomponents of this alarm.
+
+        Proximity alarms as defined in :rfc:`9074` carry one or more
+        `VLOCATION` subcomponents (:rfc:`9073`) that describe where
+        the alarm triggers. Each of them usually has a `UID`, a `NAME`,
+        and a `URL` with a `geo:` URI whose `u` parameter gives the
+        radius in meters.
+
+        Returns an empty list for regular time-based alarms.
+        """
+        return self.walk("VLOCATION")
+
     TRIGGER = create_single_property(
         "TRIGGER",
         "dt",

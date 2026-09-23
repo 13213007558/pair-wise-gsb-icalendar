@@ -46,6 +46,7 @@ INTENTIONALLY_EXCLUDED_ALARM_PROPERTIES = {
     "links",  # generic component external references
     "refids",  # generic component reference identifiers
     "related_to",  # generic component relationship, same as links/refids
+    "locations",  # proximity target locations, exposed on ProximityTrigger
     "repeat",  # overall repeat schedule, not one occurrence
     "stamp",  # generic component metadata
     "triggers",  # when/how the alarm fires overall, not the occurrence

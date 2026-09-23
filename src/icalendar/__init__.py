@@ -1,6 +1,8 @@
 from icalendar.alarms import (
     Alarms,
     AlarmTime,
+    LocationEvent,
+    ProximityTrigger,
 )
 from icalendar.cal import (
     Alarm,
@@ -42,8 +44,10 @@ from icalendar.error import (
     IncompleteAlarmInformation,
     IncompleteComponent,
     InvalidCalendar,
+    InvalidProximityRadius,
     JCalParsingError,
     LocalTimezoneMissing,
+    ProximityLocationMissing,
 )
 
 # Parameters and helper methods for splitting and joining string with escaped
@@ -134,12 +138,16 @@ __all__ = [
     "IncompleteAlarmInformation",
     "IncompleteComponent",
     "InvalidCalendar",
+    "InvalidProximityRadius",
     "JCalParsingError",
     "Journal",
     "LazyCalendar",
     "LocalTimezoneMissing",
+    "LocationEvent",
     "NFields",
     "Parameters",
+    "ProximityLocationMissing",
+    "ProximityTrigger",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",

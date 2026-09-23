@@ -93,6 +93,22 @@ class ComponentStartMissing(IncompleteAlarmInformation):
     """
 
 
+class ProximityLocationMissing(IncompleteAlarmInformation):
+    """A proximity alarm has no location to compute the distance to.
+
+    Proximity alarms as defined in :rfc:`9074` require a ``VLOCATION``
+    subcomponent with a ``geo:`` URI in its ``URL`` property.
+    """
+
+
+class InvalidProximityRadius(InvalidCalendar):
+    """The radius of a proximity alarm location is invalid.
+
+    The radius is given by the ``u`` (uncertainty) parameter of the
+    ``geo:`` URI in meters and must be a non-negative number.
+    """
+
+
 class FeatureWillBeRemovedInFutureVersion(DeprecationWarning):
     """This feature will be removed in a future version."""
 
@@ -354,6 +370,8 @@ __all__ = [
     "IncompleteAlarmInformation",
     "IncompleteComponent",
     "InvalidCalendar",
+    "InvalidProximityRadius",
     "JCalParsingError",
     "LocalTimezoneMissing",
+    "ProximityLocationMissing",
 ]

@@ -3,6 +3,8 @@
 This takes different calendar software into account and the RFC 9074 (Alarm Extension).
 
 - RFC 9074 defines an ACKNOWLEDGED property in the VALARM.
+- RFC 9074 defines proximity alarms that trigger when arriving at or
+  departing from a location. See :meth:`Alarms.proximity_triggers`.
 - Outlook does not export VALARM information.
 - Google Calendar uses the DTSTAMP to acknowledge the alarms.
 - Thunderbird snoozes the alarms with a X-MOZ-SNOOZE-TIME attribute in the event.
@@ -14,7 +16,8 @@ This takes different calendar software into account and the RFC 9074 (Alarm Exte
 from __future__ import annotations
 
 from datetime import date, timedelta, tzinfo
-from typing import TYPE_CHECKING, overload
+from math import asin, cos, radians, sin, sqrt
+from typing import TYPE_CHECKING, NamedTuple, overload
 
 from icalendar.cal.event import Event
 from icalendar.cal.todo import Todo
@@ -22,19 +25,46 @@ from icalendar.error import (
     ComponentEndMissing,
     ComponentStartMissing,
     IncompleteAlarmInformation,
+    InvalidCalendar,
+    InvalidProximityRadius,
     LocalTimezoneMissing,
+    ProximityLocationMissing,
 )
 from icalendar.timezone import tzp
 from icalendar.tools import is_date, normalize_pytz, to_datetime
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Iterable
     from datetime import datetime
 
     from icalendar.cal.alarm import Alarm
+    from icalendar.cal.component import Component
     from icalendar.prop import vBinary, vUri
 
 Parent = Event | Todo
+
+#: The default radius in meters around a proximity alarm location
+#: when the `geo:` URI does not carry an uncertainty (`u`) parameter.
+DEFAULT_PROXIMITY_RADIUS_METERS = 100.0
+
+
+class LocationEvent(NamedTuple):
+    """A single position sample from an external location source.
+
+    The alarm computation does not do GPS or network positioning itself.
+    Instead, it consumes an ordered stream of these samples, for example
+    from a device location service, and matches them against the
+    locations of proximity alarms.
+
+    Parameters:
+        when: The timezone-aware time at which the position was measured.
+        latitude: The latitude of the position in degrees.
+        longitude: The longitude of the position in degrees.
+    """
+
+    when: datetime
+    latitude: float
+    longitude: float
 
 
 class AlarmTime:
@@ -185,6 +215,157 @@ class AlarmTime:
         return self._trigger
 
 
+def _distance_meters(
+    latitude_1: float, longitude_1: float, latitude_2: float, longitude_2: float
+) -> float:
+    """Compute the great-circle distance between two positions in meters."""
+    earth_radius = 6371000.0
+    phi_1, phi_2 = radians(latitude_1), radians(latitude_2)
+    delta_phi = radians(latitude_2 - latitude_1)
+    delta_lambda = radians(longitude_2 - longitude_1)
+    a = sin(delta_phi / 2) ** 2 + cos(phi_1) * cos(phi_2) * sin(delta_lambda / 2) ** 2
+    return 2 * earth_radius * asin(sqrt(a))
+
+
+def _parse_geo_uri(uri: str, default_radius: float) -> tuple[float, float, float]:
+    """Parse a `geo:` URI into latitude, longitude and radius in meters.
+
+    The radius is the `u` (uncertainty) parameter of :rfc:`5870` `geo:`
+    URIs. If it is missing, `default_radius` is used.
+
+    Raises:
+        InvalidCalendar: If the URI is not a valid `geo:` URI.
+        InvalidProximityRadius: If the radius is not a non-negative number.
+    """
+    if not uri.lower().startswith("geo:"):
+        raise InvalidCalendar(f"Proximity alarm locations must use a geo: URI, not {uri!r}.")
+    coordinates, _, parameters = uri[4:].partition(";")
+    parts = coordinates.split(",")
+    if len(parts) < 2:
+        raise InvalidCalendar(f"Invalid geo: URI in proximity alarm: {uri!r}.")
+    try:
+        latitude, longitude = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise InvalidCalendar(f"Invalid geo: URI in proximity alarm: {uri!r}.") from None
+    radius = default_radius
+    for parameter in parameters.split(";"):
+        name, _, value = parameter.partition("=")
+        if name.lower() == "u":
+            try:
+                radius = float(value)
+            except ValueError:
+                raise InvalidProximityRadius(
+                    f"The radius of the proximity alarm location is not a number: {uri!r}."
+                ) from None
+            if radius < 0:
+                raise InvalidProximityRadius(
+                    f"The radius of the proximity alarm location is negative: {uri!r}."
+                )
+    return latitude, longitude, radius
+
+
+class ProximityTrigger:
+    """One explainable trigger record of a proximity alarm.
+
+    Each record states which :class:`LocationEvent` caused the trigger,
+    which repetition of the alarm's `REPEAT`/`DURATION` schedule it is,
+    and which `rule` produced it:
+
+    - `"proximity"` - entering or leaving the radius of a location
+    - `"repeat"` - a repetition of a proximity trigger
+    - `"snooze"` - a trigger rescheduled by snoozing the alarm
+
+    See :meth:`Alarms.proximity_triggers` for the computation.
+    """
+
+    def __init__(
+        self,
+        alarm: Alarm,
+        trigger: datetime,
+        location_event: LocationEvent,
+        vlocation: Component,
+        repetition: int,
+        rule: str,
+        acknowledged_until: datetime | None = None,
+        snoozed_until: datetime | None = None,
+        parent: Parent | None = None,
+    ) -> None:
+        """Create a trigger record. See :meth:`Alarms.proximity_triggers`."""
+        self._alarm = alarm
+        self._trigger = trigger
+        self._location_event = location_event
+        self._vlocation = vlocation
+        self._repetition = repetition
+        self._rule = rule
+        self._last_ack = acknowledged_until
+        self._snooze_until = snoozed_until
+        self._parent = parent
+
+    def __repr__(self) -> str:
+        """A representation that explains the trigger."""
+        return (
+            f"ProximityTrigger({self._alarm.PROXIMITY} "
+            f"rule={self._rule!r} repetition={self._repetition} "
+            f"trigger={self._trigger!r})"
+        )
+
+    @property
+    def alarm(self) -> Alarm:
+        """The alarm component this trigger belongs to."""
+        return self._alarm
+
+    @property
+    def parent(self) -> Parent | None:
+        """The event or todo that contains the alarm."""
+        return self._parent
+
+    @property
+    def trigger(self) -> datetime:
+        """The time at which this trigger fires, including snoozing."""
+        return self._trigger
+
+    @property
+    def location_event(self) -> LocationEvent:
+        """The position sample that caused this trigger."""
+        return self._location_event
+
+    @property
+    def location(self) -> Component:
+        """The `VLOCATION` component of the alarm that was matched."""
+        return self._vlocation
+
+    @property
+    def repetition(self) -> int:
+        """The index in the alarm's `REPEAT` schedule. `0` is the initial trigger."""
+        return self._repetition
+
+    @property
+    def rule(self) -> str:
+        """The rule that produced this record: `proximity`, `repeat` or `snooze`."""
+        return self._rule
+
+    @property
+    def acknowledged(self) -> datetime | None:
+        """The time in UTC at which this trigger was acknowledged, or None."""
+        ack = self.alarm.ACKNOWLEDGED
+        if ack is None:
+            return self._last_ack
+        if self._last_ack is None:
+            return ack
+        return max(ack, self._last_ack)
+
+    def is_active(self) -> bool:
+        """Whether this trigger still fires (`True`) or was acknowledged (`False`).
+
+        Acknowledgment is monotonic: once a trigger is acknowledged, later
+        or reordered location events cannot make it fire again.
+        """
+        acknowledged = self.acknowledged
+        if acknowledged is None:
+            return True
+        return self._trigger > acknowledged
+
+
 class Alarms:
     """Compute the times and states of alarms.
 
@@ -225,7 +406,8 @@ class Alarms:
     datetime.datetime(2021, 3, 2, 10, 15, tzinfo=ZoneInfo(key='America/New_York'))
 
     RFC 9074 specifies that alarms can also be triggered by proximity.
-    This is not implemented yet.
+    See :meth:`proximity_triggers` for alarms that fire when arriving at
+    or departing from a location.
     """
 
     def __init__(self, component: Alarm | Event | Todo | None = None) -> None:
@@ -233,6 +415,7 @@ class Alarms:
         self._absolute_alarms: list[Alarm] = []
         self._start_alarms: list[Alarm] = []
         self._end_alarms: list[Alarm] = []
+        self._proximity_alarms: list[Alarm] = []
         self._start: date | None = None
         self._end: date | None = None
         self._parent: Parent | None = None
@@ -274,6 +457,10 @@ class Alarms:
 
     def add_alarm(self, alarm: Alarm) -> None:
         """Optional: Add an alarm component."""
+        if alarm.PROXIMITY:
+            # RFC 9074: the TRIGGER of a proximity alarm is ignored.
+            self._proximity_alarms.append(alarm)
+            return
         trigger = alarm.TRIGGER
         if trigger is None:
             return
@@ -432,10 +619,196 @@ class Alarms:
         return [alarm_time for alarm_time in self.times if alarm_time.is_active()]
 
 
+    def proximity_triggers(
+        self,
+        locations: Iterable[LocationEvent],
+        now: datetime | None = None,
+        default_radius: float = DEFAULT_PROXIMITY_RADIUS_METERS,
+    ) -> list[ProximityTrigger]:
+        """Compute the triggers of proximity alarms from a location event stream.
+
+        This implements the proximity trigger semantics of :rfc:`9074`.
+        The computation does not do GPS or network positioning itself: it
+        matches an externally produced stream of :class:`LocationEvent`
+        samples against the `VLOCATION` subcomponents of the alarms.
+
+        Parameters:
+            locations: The position samples to match. They may arrive out
+                of order; they are sorted by their timestamp before
+                matching, so reordering cannot change the result or roll
+                back an acknowledgment.
+            now: An optional, controllable current time. If given, only
+                triggers that fire at or before this time are returned.
+            default_radius: The radius in meters used for locations whose
+                `geo:` URI has no uncertainty (`u`) parameter.
+
+        Returns:
+            The trigger records sorted by their trigger time. Each record
+            explains which location event, repetition and rule produced
+            it. Acknowledged triggers are included but report
+            :meth:`ProximityTrigger.is_active` as `False`.
+
+        Raises:
+            ~icalendar.error.ProximityLocationMissing: If a proximity
+                alarm has no `VLOCATION` with a `geo:` URI.
+            ~icalendar.error.InvalidProximityRadius: If the radius of a
+                location is invalid.
+            ~icalendar.error.InvalidCalendar: If the `PROXIMITY` value
+                or a `geo:` URI is invalid.
+            ~icalendar.error.LocalTimezoneMissing: If a location event
+                has no timezone.
+
+        A cancelled event never triggers:
+
+        >>> from icalendar import Event, Alarms, LocationEvent
+        >>> from datetime import datetime, timezone
+        >>> event = Event.from_ical(
+        ... '''BEGIN:VEVENT
+        ... UID:12345
+        ... DTSTAMP:20260301T000000Z
+        ... DTSTART:20260302T100000Z
+        ... STATUS:CANCELLED
+        ... BEGIN:VALARM
+        ... ACTION:DISPLAY
+        ... TRIGGER;VALUE=DATE-TIME:19760401T005545Z
+        ... PROXIMITY:ARRIVE
+        ... BEGIN:VLOCATION
+        ... UID:loc-1
+        ... URL:geo:40.443,-79.945;u=10
+        ... END:VLOCATION
+        ... END:VALARM
+        ... END:VEVENT
+        ... ''')
+        >>> alarms = Alarms(event)
+        >>> alarms.proximity_triggers([
+        ...     LocationEvent(datetime(2026, 3, 2, 9, 0, tzinfo=timezone.utc), 40.443, -79.945)
+        ... ])
+        []
+        """
+        if (
+            self._parent is not None
+            and (getattr(self._parent, "status", "") or "").upper() == "CANCELLED"
+        ):
+            return []
+        samples = sorted(locations, key=lambda sample: sample.when)
+        for sample in samples:
+            if sample.when.tzinfo is None:
+                raise LocalTimezoneMissing(
+                    "Location events must have a timezone. "
+                    "Naive timestamps cannot be matched against proximity alarms."
+                )
+        records = [
+            record
+            for alarm in self._proximity_alarms
+            for record in self._proximity_alarm_triggers(alarm, samples, default_radius)
+        ]
+        records.sort(key=lambda record: record.trigger)
+        if now is not None:
+            now = tzp.localize_utc(now)
+            records = [record for record in records if record.trigger <= now]
+        return records
+
+    def _proximity_alarm_triggers(
+        self,
+        alarm: Alarm,
+        samples: list[LocationEvent],
+        default_radius: float,
+    ) -> list[ProximityTrigger]:
+        """Compute the trigger records of one proximity alarm."""
+        direction = alarm.PROXIMITY.upper()
+        if direction not in ("ARRIVE", "DEPART"):
+            raise InvalidCalendar(
+                f"PROXIMITY must be ARRIVE or DEPART, not {alarm.PROXIMITY!r}."
+            )
+        targets = []
+        for vlocation in alarm.locations:
+            url = vlocation.get("URL")
+            if url is None:
+                continue
+            targets.append((vlocation, _parse_geo_uri(str(url), default_radius)))
+        if not targets:
+            raise ProximityLocationMissing(
+                "The proximity alarm has no VLOCATION with a geo: URI. "
+                "Add one to compute when it triggers."
+            )
+        return [
+            record
+            for vlocation, (latitude, longitude, radius) in targets
+            for record in self._proximity_location_triggers(
+                alarm, vlocation, latitude, longitude, radius, samples, direction
+            )
+        ]
+
+    def _proximity_location_triggers(
+        self,
+        alarm: Alarm,
+        vlocation: Component,
+        latitude: float,
+        longitude: float,
+        radius: float,
+        samples: list[LocationEvent],
+        direction: str,
+    ) -> list[ProximityTrigger]:
+        """Compute the records created by entering or leaving one location."""
+        records = []
+        inside = None
+        for sample in samples:
+            now_inside = (
+                _distance_meters(
+                    sample.latitude, sample.longitude, latitude, longitude
+                )
+                <= radius
+            )
+            if inside is None:
+                # The first sample only establishes where we are.
+                inside = now_inside
+                continue
+            entered = not inside and now_inside
+            left = inside and not now_inside
+            inside = now_inside
+            if (direction == "ARRIVE" and entered) or (direction == "DEPART" and left):
+                records.extend(self._proximity_records(alarm, vlocation, sample))
+        return records
+
+    def _proximity_records(
+        self,
+        alarm: Alarm,
+        vlocation: Component,
+        sample: LocationEvent,
+    ) -> list[ProximityTrigger]:
+        """Combine a proximity trigger with REPEAT, DURATION, ACKNOWLEDGED and snooze."""
+        repeat = alarm.repeat
+        duration = alarm.DURATION
+        repetitions = repeat + 1 if repeat and duration else 1
+        records = []
+        for repetition in range(repetitions):
+            trigger = sample.when + (duration * repetition if duration else timedelta(0))
+            rule = "proximity" if repetition == 0 else "repeat"
+            if self._snooze_until is not None and self._snooze_until > trigger:
+                trigger = self._snooze_until
+                rule = "snooze"
+            records.append(
+                ProximityTrigger(
+                    alarm,
+                    trigger,
+                    sample,
+                    vlocation,
+                    repetition,
+                    rule,
+                    self._last_ack,
+                    self._snooze_until,
+                    self._parent,
+                )
+            )
+        return records
+
+
 __all__ = [
     "AlarmTime",
     "Alarms",
     "ComponentEndMissing",
     "ComponentStartMissing",
     "IncompleteAlarmInformation",
+    "LocationEvent",
+    "ProximityTrigger",
 ]

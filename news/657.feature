@@ -1,0 +1,1 @@
+Add proximity-triggered `VALARM` computation following :rfc:`9074`. `Alarms.proximity_triggers()` matches an external stream of `LocationEvent` samples against the `VLOCATION` subcomponents of an alarm and returns explainable `ProximityTrigger` records that combine `REPEAT`, `DURATION`, `ACKNOWLEDGED` and snooze state.
