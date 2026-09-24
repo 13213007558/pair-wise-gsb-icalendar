@@ -185,6 +185,15 @@ class TypesFactory(CaselessDict):
             "dtstamp": "date-time",
             "last-modified": "date-time",
             "sequence": "integer",
+            # Event Poll Component Properties (RFC 9073)
+            "accept-response": "text",
+            "poll-item-id": "integer",
+            "poll-mode": "text",
+            "poll-properties": "text",
+            "poll-winner": "integer",
+            "public-comment": "text",
+            "response": "integer",
+            "stay-informed": "boolean",
             # Miscellaneous Component Properties
             "request-status": "text",
             ####################################

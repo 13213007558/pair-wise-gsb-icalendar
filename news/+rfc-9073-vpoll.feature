@@ -1,0 +1,1 @@
+Add :rfc:`9073` event poll components: ``Poll`` (``VPOLL``), ``Voter`` (``VOTER``) and ``PollItem`` (``POLL-ITEM``) with typed accessors, the ``POLLSTATUS`` and ``POLLMODE`` enums, and a ``Poll.tally`` method that counts votes with an explicit duplicate-vote policy and reports uncountable votes with reasons.

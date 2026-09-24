@@ -46,6 +46,8 @@ KNOWN_BAD_HEADINGS = {
     "Journal",
     "PARTSTAT",
     "Parameters",
+    "POLLMODE",
+    "POLLSTATUS",
     "RANGE",
     "RELATED",
     "RELTYPE",

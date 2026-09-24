@@ -14,6 +14,7 @@ from .event import Event
 from .free_busy import FreeBusy
 from .journal import Journal
 from .lazy import LazyCalendar
+from .poll import Poll, PollItem, Voter
 from .timezone import Timezone, TimezoneDaylight, TimezoneStandard
 from .todo import Todo
 
@@ -28,8 +29,11 @@ __all__ = [
     "FreeBusy",
     "Journal",
     "LazyCalendar",
+    "Poll",
+    "PollItem",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",
     "Todo",
+    "Voter",
 ]

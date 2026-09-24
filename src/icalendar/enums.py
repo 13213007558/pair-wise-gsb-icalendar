@@ -144,6 +144,47 @@ class FBTYPE(StrEnum):
     BUSY_TENTATIVE = "BUSY-TENTATIVE"
 
 
+class POLLSTATUS(StrEnum):
+    """Enum for the STATUS property of a VPOLL component from :rfc:`9073`.
+
+    Values:
+        ``CONFIRMED``,
+        ``CANCELLED``,
+        ``CLOSED``
+
+    Purpose:
+        To specify the status of a poll.
+
+    Description:
+        A ``CONFIRMED`` poll is active and accepts votes.
+        A ``CANCELLED`` poll has been abandoned and its votes
+        must not be tallied.
+        A ``CLOSED`` poll no longer accepts votes; its result
+        is final and can be tallied.
+    """
+
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+    CLOSED = "CLOSED"
+
+
+class POLLMODE(StrEnum):
+    """Enum for the POLL-MODE property of a VPOLL component from :rfc:`9073`.
+
+    Values:
+        ``BASIC``
+
+    Purpose:
+        To define how the votes in a poll are cast and interpreted.
+
+    Description:
+        In ``BASIC`` mode, voters select one or more poll items
+        and each selected item counts as a single vote.
+    """
+
+    BASIC = "BASIC"
+
+
 class CUTYPE(StrEnum):
     """Enum for CTYPE from :rfc:`5545`.
 
@@ -498,6 +539,8 @@ __all__ = [
     "CUTYPE",
     "FBTYPE",
     "PARTSTAT",
+    "POLLMODE",
+    "POLLSTATUS",
     "RANGE",
     "RELATED",
     "RELTYPE",

@@ -50,6 +50,7 @@ class ComponentFactory(CaselessDict):
         from icalendar.cal.event import Event
         from icalendar.cal.free_busy import FreeBusy
         from icalendar.cal.journal import Journal
+        from icalendar.cal.poll import Poll, PollItem, Voter
         from icalendar.cal.timezone import (
             Timezone,
             TimezoneDaylight,
@@ -68,6 +69,9 @@ class ComponentFactory(CaselessDict):
         self.add_component_class(Alarm)
         self.add_component_class(Available)
         self.add_component_class(Availability)
+        self.add_component_class(Poll)
+        self.add_component_class(PollItem)
+        self.add_component_class(Voter)
 
     def add_component_class(self, cls: type[Component]) -> None:
         """Add a component class to the factory.
