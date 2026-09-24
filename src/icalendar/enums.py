@@ -109,6 +109,49 @@ class STATUS(StrEnum):
     # CANCELLED
 
 
+class POLL_STATUS(StrEnum):
+    """Status values for a :rfc:`9073` ``VPOLL`` component."""
+
+    TENTATIVE = "TENTATIVE"
+    CONFIRMED = "CONFIRMED"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+    IN_PROCESS = "IN-PROCESS"
+
+
+class POLL_ITEM_STATUS(StrEnum):
+    """Status values for a :rfc:`9073` ``POLL-ITEM`` component."""
+
+    ACTIVE = "ACTIVE"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+
+
+class RESPONSE(StrEnum):
+    """Responses a voter can give to a :rfc:`9073`` ``POLL-ITEM``."""
+
+    YES = "YES"
+    NO = "NO"
+    ABSTAIN = "ABSTAIN"
+
+
+class VOTER_STATUS(StrEnum):
+    """Participation status understood by :rfc:`9073` voters."""
+
+    NEEDS_ACTION = "NEEDS-ACTION"
+    ACCEPTED = "ACCEPTED"
+    DECLINED = "DECLINED"
+    TENTATIVE = "TENTATIVE"
+    DELEGATED = "DELEGATED"
+
+
+class DUPLICATE_RESPONSE_POLICY(StrEnum):
+    """How duplicate responses from one voter for one candidate are handled."""
+
+    REJECT = "REJECT"
+    OVERWRITE = "OVERWRITE"
+
+
 class FBTYPE(StrEnum):
     """Enum for FBTYPE from :rfc:`5545`.
 
