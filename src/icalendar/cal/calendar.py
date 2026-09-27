@@ -22,12 +22,13 @@ from icalendar.cal.component import Component
 from icalendar.cal.examples import get_example
 from icalendar.cal.timezone import Timezone
 from icalendar.error import IncompleteComponent
+from icalendar.occurrence import DEFAULT_MAX_CANDIDATES
 from icalendar.parser.ical.calendar import CalendarIcalParser
 from icalendar.version import __version__
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from datetime import date, datetime
+    from datetime import date, datetime, tzinfo
     from pathlib import Path
 
     from icalendar.cal import (
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         Todo,
     )
     from icalendar.compatibility import Self
+    from icalendar.occurrence import Occurrences
     from icalendar.parser.ical.component import ComponentIcalParser
 
 
@@ -194,6 +196,50 @@ class Calendar(Component):
         New Year's Day
         """
         return self.walk("VEVENT")
+
+    def occurrences(
+        self,
+        start: date | datetime,
+        end: date | datetime,
+        *,
+        tz: tzinfo | str | None = None,
+        max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    ) -> Occurrences:
+        """The actual occurrences of this calendar's events in ``[start, end)``.
+
+        This expands ``DTSTART``, ``RRULE``, ``RDATE``, and ``EXDATE`` of
+        each event together with its detached exception components
+        (``RECURRENCE-ID``) and returns the instances that actually occur
+        within the half-open window, each with the ``RECURRENCE-ID`` value
+        identifying it. See :func:`icalendar.occurrence.occurrences_in_window`
+        for the full semantics.
+
+        Parameters:
+            start: The inclusive start of the query window.
+            end: The exclusive end of the query window.
+            tz: The timezone used to interpret floating (naive) datetimes.
+                Required whenever the window or any considered event uses
+                floating datetimes.
+            max_candidates: The maximum number of candidates generated from
+                RRULE expansions before the result is marked incomplete.
+
+        Example:
+            .. code-block:: pycon
+
+                >>> from icalendar import Calendar
+                >>> from datetime import date
+                >>> calendar = Calendar.example()
+                >>> for occurrence in calendar.occurrences(date(2022, 1, 1), date(2023, 1, 1)):
+                ...     print(occurrence.start, occurrence.recurrence_id)
+                2022-01-01 2022-01-01
+                2022-01-07 2022-01-07
+                2022-03-08 2022-03-08
+        """
+        from icalendar.occurrence import occurrences_in_window
+
+        return occurrences_in_window(
+            self.events, start, end, tz=tz, max_candidates=max_candidates
+        )
 
     @property
     def todos(self) -> list[Todo]:

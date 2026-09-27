@@ -45,6 +45,11 @@ from icalendar.error import (
     JCalParsingError,
     LocalTimezoneMissing,
 )
+from icalendar.occurrence import (
+    Occurrence,
+    Occurrences,
+    occurrences_in_window,
+)
 
 # Parameters and helper methods for splitting and joining string with escaped
 # chars.
@@ -139,6 +144,8 @@ __all__ = [
     "LazyCalendar",
     "LocalTimezoneMissing",
     "NFields",
+    "Occurrence",
+    "Occurrences",
     "Parameters",
     "Timezone",
     "TimezoneDaylight",
@@ -148,6 +155,7 @@ __all__ = [
     "__version__",
     "__version_tuple__",
     "is_utc",
+    "occurrences_in_window",
     "q_join",
     "q_split",
     "use_pytz",
