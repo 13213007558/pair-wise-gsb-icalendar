@@ -37,6 +37,7 @@ from icalendar.error import (
     ComponentEndMissing,
     ComponentStartMissing,
     FeatureWillBeRemovedInFutureVersion,
+    FloatingTimeError,
     GloballyUniqueTZIDGuessed,
     ICalParsingError,
     IncompleteAlarmInformation,
@@ -44,7 +45,9 @@ from icalendar.error import (
     InvalidCalendar,
     JCalParsingError,
     LocalTimezoneMissing,
+    UnsupportedRecurrence,
 )
+from icalendar.occurrence import Occurrence, Occurrences, occurrences_between
 
 # Parameters and helper methods for splitting and joining string with escaped
 # chars.
@@ -127,6 +130,7 @@ __all__ = [
     "Conference",
     "Event",
     "FeatureWillBeRemovedInFutureVersion",
+    "FloatingTimeError",
     "FreeBusy",
     "GloballyUniqueTZIDGuessed",
     "ICalParsingError",
@@ -139,15 +143,19 @@ __all__ = [
     "LazyCalendar",
     "LocalTimezoneMissing",
     "NFields",
+    "Occurrence",
+    "Occurrences",
     "Parameters",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",
     "Todo",
     "TypesFactory",
+    "UnsupportedRecurrence",
     "__version__",
     "__version_tuple__",
     "is_utc",
+    "occurrences_between",
     "q_join",
     "q_split",
     "use_pytz",

@@ -195,6 +195,58 @@ class Calendar(Component):
         """
         return self.walk("VEVENT")
 
+    def occurrences_between(
+        self,
+        start: date | datetime,
+        end: date | datetime,
+        *,
+        floating_tz=None,
+        max_candidates: int | None = None,
+    ):
+        """Return the event occurrences intersecting the window ``[start, end)``.
+
+        This expands the recurrence sets of all events in the calendar,
+        combining ``DTSTART``, ``RRULE``, ``RDATE``, ``EXDATE`` and detached
+        ``VEVENT`` exceptions, and returns the instances whose actual
+        interval intersects the half-open window.
+
+        Parameters:
+            start: The inclusive window start: a ``date`` or aware ``datetime``.
+            end: The exclusive window end.
+            floating_tz: The timezone used to interpret floating ``DATE-TIME``
+                values. Required when events use floating time.
+            max_candidates: Upper bound for generated recurrence candidates.
+                When reached, ``result.complete`` is ``False``.
+
+        Returns:
+            :class:`~icalendar.occurrence.Occurrences` with the actual
+            start/end, the original recurrence identity and the source
+            component of each instance.
+
+        Example:
+            .. code-block:: pycon
+
+                >>> from icalendar import Calendar
+                >>> from datetime import date
+                >>> calendar = Calendar.example()
+                >>> occurrences = calendar.occurrences_between(date(2022, 1, 1), date(2022, 2, 1))
+                >>> [(o.start, o.recurrence_id) for o in occurrences]
+                [(datetime.date(2022, 1, 1), datetime.date(2022, 1, 1)), (datetime.date(2022, 1, 7), datetime.date(2022, 1, 7))]
+                >>> occurrences.complete
+                True
+        """
+        from icalendar.occurrence import DEFAULT_MAX_CANDIDATES, occurrences_between
+
+        return occurrences_between(
+            self,
+            start,
+            end,
+            floating_tz=floating_tz,
+            max_candidates=(
+                DEFAULT_MAX_CANDIDATES if max_candidates is None else max_candidates
+            ),
+        )
+
     @property
     def todos(self) -> list[Todo]:
         """All todo components in the calendar.

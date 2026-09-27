@@ -79,6 +79,24 @@ class LocalTimezoneMissing(IncompleteAlarmInformation):
     """
 
 
+class UnsupportedRecurrence(InvalidCalendar):
+    """A recurrence combination is not (yet) supported.
+
+    For example, :rfc:`5545#section-3.3.10` leaves the combination of
+    multiple ``RRULE`` properties on one component undefined, and the
+    deprecated ``RANGE=THISANDPRIOR`` parameter is not supported.
+    """
+
+
+class FloatingTimeError(ValueError):
+    """A floating ``DATE-TIME`` needs an explicit timezone to be interpreted.
+
+    ``DATE-TIME`` values without a ``TZID`` and without a trailing ``Z`` are
+    floating, i.e. their meaning depends on a timezone supplied by the caller.
+    Occurrence queries refuse to guess such a timezone.
+    """
+
+
 class ComponentEndMissing(IncompleteAlarmInformation):
     """We are missing the end of a component that the alarm is for.
 
@@ -350,10 +368,12 @@ __all__ = [
     "ComponentEndMissing",
     "ComponentStartMissing",
     "FeatureWillBeRemovedInFutureVersion",
+    "FloatingTimeError",
     "ICalParsingError",
     "IncompleteAlarmInformation",
     "IncompleteComponent",
     "InvalidCalendar",
     "JCalParsingError",
     "LocalTimezoneMissing",
+    "UnsupportedRecurrence",
 ]
