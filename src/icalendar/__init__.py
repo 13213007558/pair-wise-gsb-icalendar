@@ -94,6 +94,13 @@ from icalendar.prop.image import Image
 
 # Switching the timezone provider
 from icalendar.prop.n import NFields
+from icalendar.series_consistency import (
+    SeriesConsistencyError,
+    SeriesConsistencyErrorFound,
+    SeriesConsistencyReport,
+    SeriesErrorCode,
+    check_series_consistency,
+)
 from icalendar.timezone import is_utc, use_pytz, use_zoneinfo
 
 from .version import __version__, __version_tuple__, version, version_tuple
@@ -109,7 +116,12 @@ __all__ = [
     "RELTYPE",
     "ROLE",
     "STATUS",
+    "SeriesConsistencyError",
+    "SeriesConsistencyErrorFound",
+    "SeriesConsistencyReport",
+    "SeriesErrorCode",
     "TRANSP",
+    "check_series_consistency",
     "VALUE",
     "VPROPERTY",
     "AdrFields",

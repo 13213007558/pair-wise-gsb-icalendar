@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     )
     from icalendar.compatibility import Self
     from icalendar.parser.ical.component import ComponentIcalParser
+    from icalendar.series_consistency import SeriesConsistencyReport
 
 
 DEFAULT_PRODID = f"-//collective//icalendar//{__version__}//EN"
@@ -176,6 +177,33 @@ class Calendar(Component):
         return cast(
             "Calendar | list[Calendar]", super().from_ical(st, multiple=multiple)
         )
+
+    def check_series_consistency(self) -> SeriesConsistencyReport:
+        """Check the consistency of the recurring series in this calendar.
+
+        This is an explicit, read-only check of cross-component rules that
+        cannot be seen by parsing any single component: uniqueness of the
+        master per ``UID``, duplicate exception identities,
+        ``RECURRENCE-ID`` value type and time form agreement with the master
+        ``DTSTART``, ``RRULE`` ``COUNT``/``UNTIL`` and ``UNTIL``/``DTSTART``
+        requirements, ``DTEND``/``DURATION`` exclusivity and value ranges,
+        ``RDATE``/``EXDATE`` time-type compatibility, and conflicting
+        ``RANGE=THISANDFUTURE`` declarations. Parse errors already recorded
+        while reading the calendar are included in the report.
+
+        The calendar is never modified: no dates are rewritten, no ``UID`` is
+        invented, no exception is removed, and no recurrence set is expanded.
+        Whether a ``RECURRENCE-ID`` names an instance that the master actually
+        generates is not checked.
+
+        Returns:
+            A :class:`~icalendar.SeriesConsistencyReport` with all errors that
+            could be determined; see
+            :func:`~icalendar.check_series_consistency`.
+        """
+        from icalendar.series_consistency import check_series_consistency
+
+        return check_series_consistency(self)
 
     @property
     def events(self) -> list[Event]:

@@ -10,6 +10,7 @@ How to guides
     upgrade
     usage
     parse-errors
+    series-consistency
     attendees
     custom-components
     jcal
