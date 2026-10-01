@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta, tzinfo
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from typing import TYPE_CHECKING, Literal
 
 import dateutil.rrule
 import dateutil.tz
@@ -17,6 +18,11 @@ from icalendar.attr import (
 )
 from icalendar.cal.component import Component
 from icalendar.cal.examples import get_example
+from icalendar.error import (
+    AmbiguousLocalTime,
+    InsufficientTimezoneData,
+    NonExistentLocalTime,
+)
 from icalendar.prop import vUTCOffset
 from icalendar.timezone import TZP, tzp
 from icalendar.timezone.tzid import tzid_from_tzinfo
@@ -24,6 +30,71 @@ from icalendar.tools import to_datetime
 
 if TYPE_CHECKING:
     from icalendar.cal import Calendar
+
+
+def _rounded_utc_offset(offset: timedelta) -> timedelta:
+    """Round a UTC offset to the next minute.
+
+    We might lose up to 30 seconds accuracy, but it can't be helped
+    (datetime supposedly cannot handle smaller offsets).
+    """
+    seconds = int((offset.seconds + 30) / 60) * 60
+    return timedelta(days=offset.days, seconds=seconds)
+
+
+def _as_naive_utc(dt: datetime) -> datetime:
+    """Return the naive UTC representation of dt; naive input is assumed UTC."""
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+FoldPolicy = Literal["earlier", "later", "reject"]
+"""How to resolve a local time that occurs twice.
+
+- 'earlier': pick the occurrence that is earlier in UTC.
+- 'later': pick the occurrence that is later in UTC.
+- 'reject': raise AmbiguousLocalTime with both candidate offsets.
+"""
+
+GapPolicy = Literal["shift-forward", "reject"]
+"""How to resolve a local time that never occurs.
+
+- 'shift-forward': move the time forward by the size of the gap.
+- 'reject': raise NonExistentLocalTime with the gap diagnostic.
+"""
+
+
+@dataclass(frozen=True)
+class TimezoneTransition:
+    """A single UTC offset transition of a VTIMEZONE component."""
+
+    utc: datetime
+    """The aware UTC time at which the transition occurs."""
+
+    offset_from: timedelta
+    """The UTC offset in effect before the transition (TZOFFSETFROM)."""
+
+    offset_to: timedelta
+    """The UTC offset in effect after the transition (TZOFFSETTO)."""
+
+    tzname: str | None
+    """The TZNAME of the observance that starts, or None if not given."""
+
+    is_dst: bool
+    """Whether the observance that starts is a DAYLIGHT component."""
+
+
+@dataclass(frozen=True)
+class _Observance:
+    """A STANDARD or DAYLIGHT sub-component prepared for computation."""
+
+    offset_from: timedelta
+    offset_to: timedelta
+    onsets: dateutil.rrule.rruleset
+    open_ended: bool
+    tzname: str | None
+    is_dst: bool
 
 
 class Timezone(Component):
@@ -65,10 +136,8 @@ class Timezone(Component):
         # offsets need to be rounded to the next minute, we might loose up
         # to 30 seconds accuracy, but it can't be helped (datetime
         # supposedly cannot handle smaller offsets)
-        offsetto_s = int((offsetto.seconds + 30) / 60) * 60
-        offsetto = timedelta(days=offsetto.days, seconds=offsetto_s)
-        offsetfrom_s = int((offsetfrom.seconds + 30) / 60) * 60
-        offsetfrom = timedelta(days=offsetfrom.days, seconds=offsetfrom_s)
+        offsetto = _rounded_utc_offset(offsetto)
+        offsetfrom = _rounded_utc_offset(offsetfrom)
 
         # expand recurrences
         if "RRULE" in component:
@@ -215,6 +284,354 @@ class Timezone(Component):
                     dst_offset = osto - osfrom
             transition_info.append((osto, dst_offset, name))
         return transition_times, transition_info
+
+    #: Margin around a requested instant when collecting transitions.
+    #: UTC offsets stay well below one day, so two days are generous.
+    _TRANSITION_WINDOW_MARGIN = timedelta(days=2)
+
+    def _observance_components(self):
+        """Yield the STANDARD and DAYLIGHT sub-components in order."""
+        for component in self.subcomponents:
+            if isinstance(component, (TimezoneStandard, TimezoneDaylight)):
+                yield component
+
+    @staticmethod
+    def _onset_ruleset(
+        component: TimezoneStandard | TimezoneDaylight,
+        offset_from: timedelta,
+    ) -> tuple[dateutil.rrule.rruleset, bool]:
+        """Compute the local onset times of a STANDARD or DAYLIGHT component.
+
+        Returns the onset rruleset and whether the observance is open-ended,
+        i.e. whether its offset stays in effect indefinitely after its last
+        onset. This is the case for an unbounded RRULE and for a bare
+        DTSTART without RRULE or RDATE.
+
+        The datetimes in the set carry offset_from as a fixed-offset tzinfo
+        so that aware UNTIL values compare correctly; their wall time is
+        the local onset time.
+        """
+        tzi = dateutil.tz.tzoffset(None, offset_from)
+        start = to_datetime(component.DTSTART).replace(tzinfo=tzi)
+        onsets = dateutil.rrule.rruleset()
+        if "RRULE" in component:
+            recur = component["RRULE"]
+            rule = dateutil.rrule.rrulestr(
+                recur.to_ical().decode("utf-8"), dtstart=start
+            )
+            until = rule._until  # noqa: SLF001
+            if until is not None and until.tzinfo is None:
+                # a naive UNTIL is a local time, just like DTSTART
+                rule._until = until.replace(tzinfo=tzi)  # noqa: SLF001
+            onsets.rrule(rule)
+            open_ended = "UNTIL" not in recur and "COUNT" not in recur
+        else:
+            open_ended = "RDATE" not in component
+        onsets.rdate(start)  # DTSTART itself is always an onset
+        for rdate, _end in component.rdates:
+            onsets.rdate(to_datetime(rdate).replace(tzinfo=tzi))
+        for exdate in component.exdates:
+            onsets.exdate(to_datetime(exdate).replace(tzinfo=tzi))
+        return onsets, open_ended
+
+    def _observances(self) -> list[_Observance]:
+        """The observances of this VTIMEZONE prepared for computation."""
+        observances = []
+        for component in self._observance_components():
+            offset_from = _rounded_utc_offset(component.TZOFFSETFROM)
+            onsets, open_ended = self._onset_ruleset(component, offset_from)
+            tzname = component.get("TZNAME")
+            observances.append(
+                _Observance(
+                    offset_from=offset_from,
+                    offset_to=_rounded_utc_offset(component.TZOFFSETTO),
+                    onsets=onsets,
+                    open_ended=open_ended,
+                    tzname=None if tzname is None else str(tzname),
+                    is_dst=isinstance(component, TimezoneDaylight),
+                )
+            )
+        return observances
+
+    def transitions_between(
+        self, start: datetime, end: datetime
+    ) -> list[TimezoneTransition]:
+        """Compute the transitions with a UTC onset between start and end.
+
+        The transitions are derived only from the STANDARD and DAYLIGHT
+        sub-components with their DTSTART, RRULE and RDATE properties;
+        the timezone database of the operating system is not consulted.
+        Naive datetimes are assumed to be in UTC. The result is sorted
+        by UTC onset.
+        """
+        start_utc = _as_naive_utc(start)
+        end_utc = _as_naive_utc(end)
+        if end_utc < start_utc:
+            raise ValueError(f"end {end!r} must not be before start {start!r}.")
+        transitions = []
+        for observance in self._observances():
+            tzi = dateutil.tz.tzoffset(None, observance.offset_from)
+            first = (start_utc + observance.offset_from).replace(tzinfo=tzi)
+            last = (end_utc + observance.offset_from).replace(tzinfo=tzi)
+            for onset in observance.onsets.between(first, last, inc=True):
+                utc_onset = onset.replace(tzinfo=None) - observance.offset_from
+                transitions.append(
+                    TimezoneTransition(
+                        utc=utc_onset.replace(tzinfo=timezone.utc),
+                        offset_from=observance.offset_from,
+                        offset_to=observance.offset_to,
+                        tzname=observance.tzname,
+                        is_dst=observance.is_dst,
+                    )
+                )
+        transitions.sort(key=lambda transition: transition.utc)
+        return transitions
+
+    def _transitions_around(
+        self, observances: list[_Observance], instant_utc: datetime
+    ) -> list[tuple[datetime, timedelta, timedelta, bool]]:
+        """Collect the transition entries around a naive UTC instant.
+
+        Each entry is (utc_onset, offset_from, offset_to, open_ended).
+        The latest onset at or before the window is included so that the
+        offset in effect at the start of the window is known.
+        """
+        window_start = instant_utc - self._TRANSITION_WINDOW_MARGIN
+        window_end = instant_utc + self._TRANSITION_WINDOW_MARGIN
+        entries = []
+        for observance in observances:
+            tzi = dateutil.tz.tzoffset(None, observance.offset_from)
+            first = (window_start + observance.offset_from).replace(tzinfo=tzi)
+            last = (window_end + observance.offset_from).replace(tzinfo=tzi)
+            local_onsets = set(observance.onsets.between(first, last, inc=True))
+            previous = observance.onsets.before(first, inc=True)
+            if previous is not None:
+                local_onsets.add(previous)
+            for onset in local_onsets:
+                utc_onset = onset.replace(tzinfo=None) - observance.offset_from
+                entries.append(
+                    (
+                        utc_onset,
+                        observance.offset_from,
+                        observance.offset_to,
+                        observance.open_ended,
+                    )
+                )
+        entries.sort(key=lambda entry: entry[0])
+        return entries
+
+    @staticmethod
+    def _offset_at(
+        entries: list[tuple[datetime, timedelta, timedelta, bool]],
+        utc_instant: datetime,
+    ) -> timedelta | None:
+        """The UTC offset in effect at utc_instant, or None if unknown."""
+        offset = None
+        for onset, _offset_from, offset_to, _open_ended in entries:
+            if onset > utc_instant:
+                break
+            offset = offset_to
+        return offset
+
+    def _require_coverage(
+        self,
+        observances: list[_Observance],
+        entries: list[tuple[datetime, timedelta, timedelta, bool]],
+        utc_instant: datetime,
+    ) -> None:
+        """Raise InsufficientTimezoneData if the rules say nothing about an instant."""
+        latest = None
+        for entry in entries:
+            if entry[0] > utc_instant:
+                break
+            latest = entry
+        if latest is None:
+            raise InsufficientTimezoneData(
+                f"The VTIMEZONE {self.tz_name!r} has no transition at or before "
+                f"{utc_instant} UTC: its rules do not cover this instant.",
+                dt=utc_instant,
+                tzid=self.tz_name,
+            )
+        if latest[3]:
+            # the observance of the latest onset is open-ended:
+            # its offset stays in effect
+            return
+        if any(entry[0] > utc_instant for entry in entries):
+            return
+        # the window is exhausted; ask the observances whether any later
+        # onset exists at all
+        for observance in observances:
+            tzi = dateutil.tz.tzoffset(None, observance.offset_from)
+            later = observance.onsets.after(
+                (utc_instant + observance.offset_from).replace(tzinfo=tzi),
+                inc=True,
+            )
+            if later is not None:
+                return
+        raise InsufficientTimezoneData(
+            f"The rules of the VTIMEZONE {self.tz_name!r} end before "
+            f"{utc_instant} UTC and do not cover this instant.",
+            dt=utc_instant,
+            tzid=self.tz_name,
+        )
+
+    def utc_offset_at(self, dt: datetime) -> timedelta:
+        """Return the UTC offset in effect at the UTC instant dt.
+
+        A naive dt is assumed to be in UTC. The offset is derived only
+        from this component; the timezone database is not consulted.
+
+        Raises:
+            InsufficientTimezoneData: if the rules of this VTIMEZONE
+                do not cover the instant.
+        """
+        instant = _as_naive_utc(dt)
+        observances = self._observances()
+        entries = self._transitions_around(observances, instant)
+        self._require_coverage(observances, entries, instant)
+        offset = self._offset_at(entries, instant)
+        if offset is None:  # pragma: no cover - guarded by _require_coverage
+            raise InsufficientTimezoneData(
+                f"The VTIMEZONE {self.tz_name!r} does not define an offset "
+                f"for {instant} UTC.",
+                dt=instant,
+                tzid=self.tz_name,
+            )
+        return offset
+
+    @staticmethod
+    def _candidate_offsets(
+        entries: list[tuple[datetime, timedelta, timedelta, bool]],
+        local: datetime,
+    ) -> list[timedelta]:
+        """The offsets with which the naive local time occurs."""
+        candidates = []
+        for _onset, _offset_from, offset_to, _open_ended in entries:
+            if offset_to in candidates:
+                continue
+            if Timezone._offset_at(entries, local - offset_to) == offset_to:
+                candidates.append(offset_to)
+        return candidates
+
+    def offsets_for_local(self, dt: datetime) -> tuple[timedelta, ...]:
+        """Return the UTC offsets with which the naive local time dt occurs.
+
+        - one offset: the local time is unambiguous
+        - two offsets: the local time occurs twice (clocks are turned back)
+        - no offsets: the local time never occurs (clocks are turned forward)
+
+        Raises:
+            InsufficientTimezoneData: if the rules of this VTIMEZONE
+                do not cover the local time.
+        """
+        if dt.tzinfo is not None:
+            raise ValueError(f"dt must be a naive local time, got {dt!r}.")
+        observances = self._observances()
+        entries = self._transitions_around(observances, dt)
+        self._require_coverage(observances, entries, dt)
+        return tuple(self._candidate_offsets(entries, dt))
+
+    @staticmethod
+    def _enclosing_gap(
+        entries: list[tuple[datetime, timedelta, timedelta, bool]],
+        local: datetime,
+    ) -> tuple[datetime, timedelta, timedelta]:
+        """Find the forward transition whose skipped interval contains the time.
+
+        Returns (utc_onset, offset_from, offset_to). If no transition's gap
+        contains the time, the nearest forward transition is used.
+        """
+        forward = [
+            (onset, offset_from, offset_to)
+            for onset, offset_from, offset_to, _open_ended in entries
+            if offset_to > offset_from
+        ]
+        for onset, offset_from, offset_to in forward:
+            if onset + offset_from <= local < onset + offset_to:
+                return onset, offset_from, offset_to
+        if forward:
+            return min(
+                forward,
+                key=lambda transition: abs(transition[0] + transition[1] - local),
+            )
+        raise InsufficientTimezoneData(
+            f"No forward transition explains the missing local time {local!r}.",
+            dt=local,
+        )
+
+    def local_to_utc(
+        self,
+        dt: datetime,
+        *,
+        fold: FoldPolicy | None = None,
+        gap: GapPolicy = "shift-forward",
+    ) -> datetime:
+        """Convert a naive local time of this VTIMEZONE to an aware UTC datetime.
+
+        Parameters:
+            dt: the naive local wall-clock time.
+            fold: how to handle a local time that occurs twice when clocks
+                are turned back: 'earlier', 'later' or 'reject'.
+                If None, the fold attribute of dt is used as in PEP 495:
+                fold=0 picks the earlier, fold=1 the later occurrence.
+            gap: how to handle a local time that never occurs when clocks
+                are turned forward: 'shift-forward' moves the time forward
+                by the size of the gap, 'reject' raises an error.
+
+        Raises:
+            AmbiguousLocalTime: a repeated local time with fold='reject'.
+            NonExistentLocalTime: a skipped local time with gap='reject'.
+            InsufficientTimezoneData: the rules do not cover the local time.
+        """
+        if dt.tzinfo is not None:
+            raise ValueError(f"dt must be a naive local time, got {dt!r}.")
+        if fold not in (None, "earlier", "later", "reject"):
+            raise ValueError(
+                f"fold must be None, 'earlier', 'later' or 'reject', got {fold!r}."
+            )
+        if gap not in ("shift-forward", "reject"):
+            raise ValueError(f"gap must be 'shift-forward' or 'reject', got {gap!r}.")
+        observances = self._observances()
+        entries = self._transitions_around(observances, dt)
+        self._require_coverage(observances, entries, dt)
+        candidates = self._candidate_offsets(entries, dt)
+        if len(candidates) == 1:
+            return (dt - candidates[0]).replace(tzinfo=timezone.utc)
+        if candidates:
+            policy = fold
+            if policy is None:
+                # PEP 495: fold=0 is the earlier, fold=1 the later occurrence
+                policy = "later" if dt.fold else "earlier"
+            if policy == "reject":
+                raise AmbiguousLocalTime(dt, candidates)
+            instants = sorted(dt - offset for offset in candidates)
+            chosen = instants[0] if policy == "earlier" else instants[-1]
+            return chosen.replace(tzinfo=timezone.utc)
+        _onset, offset_from, offset_to = self._enclosing_gap(entries, dt)
+        if gap == "reject":
+            raise NonExistentLocalTime(dt, offset_from, offset_to)
+        shifted = dt + (offset_to - offset_from)
+        return (shifted - offset_to).replace(tzinfo=timezone.utc)
+
+    def utc_to_local(self, dt: datetime) -> datetime:
+        """Convert a UTC instant to the naive local time of this VTIMEZONE.
+
+        A naive dt is assumed to be in UTC. If the local time occurs twice,
+        the fold attribute of the result distinguishes the occurrences, so
+        that local_to_utc(utc_to_local(dt)) == dt.
+
+        Raises:
+            InsufficientTimezoneData: if the rules of this VTIMEZONE
+                do not cover the instant.
+        """
+        instant = _as_naive_utc(dt)
+        offset = self.utc_offset_at(instant)
+        local = instant + offset
+        candidates = self.offsets_for_local(local)
+        if len(candidates) > 1:
+            instants = sorted(local - candidate for candidate in candidates)
+            local = local.replace(fold=min(instants.index(instant), 1))
+        return local
 
     # binary search
     _from_tzinfo_skip_search = [
@@ -455,4 +872,11 @@ class TimezoneDaylight(Component):
     rrules = rrules_property
 
 
-__all__ = ["Timezone", "TimezoneDaylight", "TimezoneStandard"]
+__all__ = [
+    "FoldPolicy",
+    "GapPolicy",
+    "Timezone",
+    "TimezoneDaylight",
+    "TimezoneStandard",
+    "TimezoneTransition",
+]

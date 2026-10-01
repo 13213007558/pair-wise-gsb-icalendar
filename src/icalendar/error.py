@@ -106,6 +106,69 @@ class GloballyUniqueTZIDGuessed(UserWarning):
     """
 
 
+class TimezoneResolutionError(ValueError):
+    """A local time could not be resolved unambiguously with a VTIMEZONE."""
+
+
+class AmbiguousLocalTime(TimezoneResolutionError):
+    """A naive local time occurs twice because clocks are turned back.
+
+    This is raised by Timezone.local_to_utc when the local time falls into
+    the repeated wall-clock interval of a backward transition and the
+    'fold' policy is 'reject'.
+    """
+
+    def __init__(self, dt, offsets) -> None:
+        """Create the error for the local time dt with candidate offsets."""
+        self.dt = dt
+        self.offsets = tuple(offsets)
+        super().__init__(
+            f"{dt!r} is ambiguous: it occurs {len(self.offsets)} times with "
+            f"UTC offsets {self.offsets!r}. "
+            "Pass fold='earlier' or fold='later' to pick one."
+        )
+
+
+class NonExistentLocalTime(TimezoneResolutionError):
+    """A naive local time never occurs because clocks are turned forward.
+
+    This is raised by Timezone.local_to_utc when the local time falls into
+    the skipped wall-clock interval of a forward transition and the
+    'gap' policy is 'reject'.
+    """
+
+    def __init__(self, dt, offset_before, offset_after) -> None:
+        """Create the error for the imaginary local time dt.
+
+        offset_before and offset_after are the UTC offsets in effect
+        before and after the forward transition.
+        """
+        self.dt = dt
+        self.offset_before = offset_before
+        self.offset_after = offset_after
+        self.gap = offset_after - offset_before
+        super().__init__(
+            f"{dt!r} does not exist: clocks jump forward by {self.gap} from "
+            f"UTC offset {offset_before} to {offset_after}. "
+            "Pass gap='shift-forward' to move the time out of the gap."
+        )
+
+
+class InsufficientTimezoneData(TimezoneResolutionError):
+    """The VTIMEZONE rules do not cover the requested instant.
+
+    The sub-components of the VTIMEZONE define no applicable onset for the
+    requested time, so no UTC offset can be derived from the component alone.
+    This is raised instead of silently assuming UTC.
+    """
+
+    def __init__(self, message: str, dt=None, tzid=None) -> None:
+        """Create the error with a message and optional context."""
+        self.dt = dt
+        self.tzid = tzid
+        super().__init__(message)
+
+
 def _repr_index(index: str | int) -> str:
     """Create a JSON compatible representation for the index.
 
@@ -346,6 +409,7 @@ class JCalParsingError(InvalidCalendar):
 
 
 __all__ = [
+    "AmbiguousLocalTime",
     "BrokenCalendarProperty",
     "ComponentEndMissing",
     "ComponentStartMissing",
@@ -353,7 +417,10 @@ __all__ = [
     "ICalParsingError",
     "IncompleteAlarmInformation",
     "IncompleteComponent",
+    "InsufficientTimezoneData",
     "InvalidCalendar",
     "JCalParsingError",
     "LocalTimezoneMissing",
+    "NonExistentLocalTime",
+    "TimezoneResolutionError",
 ]
