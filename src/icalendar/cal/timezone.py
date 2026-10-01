@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING
 
 import dateutil.rrule
@@ -20,6 +20,17 @@ from icalendar.cal.examples import get_example
 from icalendar.prop import vUTCOffset
 from icalendar.timezone import TZP, tzp
 from icalendar.timezone.tzid import tzid_from_tzinfo
+from icalendar.timezone.vtimezone import (
+    FoldPolicy,
+    GapPolicy,
+    LocalTimeDiagnosis,
+    Transition,
+    VTIMEZONEInfo,
+    _component_occurrences,
+    _round_offset as _round_vtimezone_offset,
+    diagnose_local,
+    localize_naive,
+)
 from icalendar.tools import to_datetime
 
 if TYPE_CHECKING:
@@ -215,6 +226,218 @@ class Timezone(Component):
                     dst_offset = osto - osfrom
             transition_info.append((osto, dst_offset, name))
         return transition_times, transition_info
+
+    def get_transitions_between(
+        self, start: datetime, end: datetime
+    ) -> tuple[Transition, ...]:
+        """Return all UTC transitions with wall-clock onset in the window.
+
+        ``start`` and ``end`` are naive local wall-clock datetimes that
+        bound the ``DTSTART``/``RRULE``/``RDATE`` onsets of the
+        ``STANDARD`` and ``DAYLIGHT`` sub-components.
+
+        Only information present in this VTIMEZONE is used; the operating
+        system timezone database is never consulted. Transitions with the
+        same UTC instant are merged deterministically (the components are
+        ordered STANDARD before DAYLIGHT and the last definition wins).
+        """
+        if start.tzinfo is not None or end.tzinfo is not None:
+            raise ValueError("start and end must be naive local datetimes.")
+        if end < start:
+            raise ValueError("end must not be earlier than start.")
+        transitions, _ = self._get_transitions_with_neighbors(
+            start, end, include_neighbors=False
+        )
+        return transitions
+
+    def _get_transitions_with_neighbors(
+        self, start: datetime, end: datetime, include_neighbors: bool
+    ) -> tuple[tuple[Transition, ...], tuple[Transition, ...]]:
+        """Return window transitions and, optionally, their neighbours."""
+        raw: dict[datetime, tuple[Transition, bool]] = {}
+        standard_bases: list[tuple[datetime, timedelta]] = []
+
+        def add_onset(
+            local_dt: datetime,
+            inside: bool,
+            offset_from: timedelta,
+            offset_to: timedelta,
+            is_dst: bool,
+            name: str,
+        ) -> None:
+            utc_instant = (local_dt - offset_from).replace(
+                tzinfo=timezone.utc
+            )
+            transition = Transition(
+                utc=utc_instant,
+                local=local_dt,
+                offset_from=offset_from,
+                offset_to=offset_to,
+                dst_offset=timedelta(0),
+                is_dst=is_dst,
+                tzname=name,
+            )
+            existing = raw.get(utc_instant)
+            if existing is None or (inside and not existing[1]):
+                raw[utc_instant] = (transition, inside)
+            if not is_dst:
+                standard_bases.append((utc_instant, offset_to))
+
+        for component in self._timezone_observances():
+            offset_from = _round_vtimezone_offset(component.TZOFFSETFROM)
+            offset_to = _round_vtimezone_offset(component.TZOFFSETTO)
+            is_dst = component.name == "DAYLIGHT"
+            name = self._timezone_component_name(component)
+            occurrences, neighbors = _component_occurrences(
+                component, start, end, include_neighbors=include_neighbors
+            )
+            for local_dt in occurrences:
+                add_onset(
+                    local_dt, True, offset_from, offset_to, is_dst, name
+                )
+            if include_neighbors:
+                for local_dt in sorted(neighbors - set(occurrences)):
+                    add_onset(
+                        local_dt, False, offset_from, offset_to, is_dst, name
+                    )
+        merged: list[tuple[Transition, bool]] = []
+        for utc in sorted(raw):
+            transition, inside = raw[utc]
+            dst_offset = timedelta(0)
+            if transition.is_dst:
+                base_offset = None
+                prior = [
+                    candidate
+                    for candidate in standard_bases
+                    if candidate[0] < utc
+                ]
+                if prior:
+                    base_offset = max(prior, key=lambda item: item[0])[1]
+                else:
+                    later = [
+                        candidate
+                        for candidate in standard_bases
+                        if candidate[0] > utc
+                    ]
+                    if later:
+                        base_offset = min(later, key=lambda item: item[0])[1]
+                if base_offset is not None:
+                    dst_offset = transition.offset_to - base_offset
+                else:
+                    dst_offset = transition.offset_to - transition.offset_from
+            merged.append((
+                Transition(
+                    utc=utc,
+                    local=transition.local,
+                    offset_from=transition.offset_from,
+                    offset_to=transition.offset_to,
+                    dst_offset=dst_offset,
+                    is_dst=transition.is_dst,
+                    tzname=transition.tzname,
+                ),
+                inside,
+            ))
+        ordered = merged
+        window = tuple(
+            transition for transition, inside in ordered if inside
+        )
+        neighbours = tuple(
+            transition for transition, inside in ordered if not inside
+        )
+        return window, neighbours
+
+    def _timezone_observances(self) -> list[TimezoneStandard | TimezoneDaylight]:
+        """Return the STANDARD and DAYLIGHT sub-components."""
+        return [
+            component
+            for component in self.walk()
+            if isinstance(component, TimezoneStandard | TimezoneDaylight)
+        ]
+
+    def _timezone_component_name(
+        self, component: TimezoneStandard | TimezoneDaylight
+    ) -> str:
+        """Return the TZNAME of a sub-component or a generated name."""
+        zone = self.tz_name
+        try:
+            return str(component["TZNAME"])
+        except UnicodeEncodeError:
+            return component["TZNAME"].encode("ascii", "replace").decode()
+        except KeyError:
+            tzname = (
+                f"{zone}_{component['DTSTART'].to_ical().decode('utf-8')}_"
+                f"{component['TZOFFSETFROM'].to_ical()}_"
+                f"{component['TZOFFSETTO'].to_ical()}"
+            )
+            names = getattr(self, "_generated_tznames", None)
+            if names is None:
+                names = set()
+                self._generated_tznames = names
+            return self._make_unique_tzname(tzname, names)
+
+    @property
+    def coverage_start(self) -> datetime | None:
+        """Earliest wall-clock onset the components cover.
+
+        Per :rfc:`5545`, a ``STANDARD``/``DAYLIGHT`` rule with an
+        ``RRULE`` describes the observance from its ``DTSTART`` on, even
+        when the first rule instance that matches is later in the year.
+        Components without an ``RRULE`` cover their ``RDATE`` values.
+        ``None`` means the component has no observance at all.
+        """
+        starts: list[datetime] = []
+        for component in self._timezone_observances():
+            starts.append(to_datetime(component.DTSTART).replace(tzinfo=None))
+            if "RRULE" not in component and "RDATE" in component:
+                for entry in component.rdates:
+                    value = entry[0] if isinstance(entry, tuple) else entry
+                    starts.append(to_datetime(value).replace(tzinfo=None))
+        return min(starts) if starts else None
+
+    def to_tzinfo(self) -> VTIMEZONEInfo:
+        """Return a ``tzinfo`` built solely from this VTIMEZONE.
+
+        Unlike :meth:`to_tz`, this never looks up the TZID in the
+        operating system timezone database. Transitions are generated
+        lazily from the ``STANDARD``/``DAYLIGHT`` sub-components in a
+        finite window around each converted datetime.
+        """
+        return VTIMEZONEInfo(self)
+
+    def diagnose_local(self, local: datetime) -> LocalTimeDiagnosis:
+        """Classify a naive local time without choosing an offset.
+
+        :param local: naive local wall-clock time
+        :returns: a :class:`LocalTimeDiagnosis` with zero, one or two
+            candidates and fold/gap details
+        """
+        return diagnose_local(self, local)
+
+    def localize_naive(
+        self,
+        local: datetime,
+        fold: FoldPolicy | str = FoldPolicy.EARLIER,
+        gap: GapPolicy | str = GapPolicy.REJECT,
+    ) -> datetime:
+        """Convert a naive local time to an aware datetime.
+
+        :param local: naive local wall-clock time
+        :param fold: ``"earlier"`` (default), ``"later"`` or ``"reject"``
+            for times that occur twice when clocks are set back
+        :param gap: ``"reject"`` (default) or ``"shift-forward"`` for
+            times that do not exist when clocks jump forward
+        :raises AmbiguousTimeError: if ``fold`` is ``"reject"``
+        :raises NonExistentTimeError: if ``gap`` is ``"reject"``
+        :raises InsufficientTimezoneDataError: if the VTIMEZONE does not
+            cover ``local``
+        """
+        return localize_naive(self, local, fold=fold, gap=gap)
+
+    def from_utc(self, utc: datetime) -> datetime:
+        """Convert a timezone-aware UTC datetime to this VTIMEZONE."""
+        if utc.tzinfo is None:
+            raise ValueError("from_utc() requires a timezone-aware datetime.")
+        return self.to_tzinfo().from_utc(utc)
 
     # binary search
     _from_tzinfo_skip_search = [

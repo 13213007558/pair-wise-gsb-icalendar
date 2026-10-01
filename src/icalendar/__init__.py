@@ -33,6 +33,7 @@ from icalendar.enums import (
     VALUE,
 )
 from icalendar.error import (
+    AmbiguousTimeError,
     BrokenCalendarProperty,
     ComponentEndMissing,
     ComponentStartMissing,
@@ -41,9 +42,12 @@ from icalendar.error import (
     ICalParsingError,
     IncompleteAlarmInformation,
     IncompleteComponent,
+    InsufficientTimezoneDataError,
     InvalidCalendar,
     JCalParsingError,
     LocalTimezoneMissing,
+    NonExistentTimeError,
+    VTIMEZONEConversionError,
 )
 
 # Parameters and helper methods for splitting and joining string with escaped
@@ -95,6 +99,15 @@ from icalendar.prop.image import Image
 # Switching the timezone provider
 from icalendar.prop.n import NFields
 from icalendar.timezone import is_utc, use_pytz, use_zoneinfo
+from icalendar.timezone.vtimezone import (
+    FoldPolicy,
+    GapPolicy,
+    LocalTimeCandidate,
+    LocalTimeDiagnosis,
+    LocalTimeKind,
+    Transition,
+    VTIMEZONEInfo,
+)
 
 from .version import __version__, __version_tuple__, version, version_tuple
 
@@ -103,6 +116,11 @@ __all__ = [
     "CLASS",
     "CUTYPE",
     "FBTYPE",
+    "FoldPolicy",
+    "GapPolicy",
+    "LocalTimeCandidate",
+    "LocalTimeDiagnosis",
+    "LocalTimeKind",
     "PARTSTAT",
     "RANGE",
     "RELATED",
@@ -116,6 +134,7 @@ __all__ = [
     "Alarm",
     "AlarmTime",
     "Alarms",
+    "AmbiguousTimeError",
     "Availability",
     "Available",
     "BrokenCalendarProperty",
@@ -133,18 +152,23 @@ __all__ = [
     "Image",
     "IncompleteAlarmInformation",
     "IncompleteComponent",
+    "InsufficientTimezoneDataError",
     "InvalidCalendar",
     "JCalParsingError",
     "Journal",
     "LazyCalendar",
     "LocalTimezoneMissing",
     "NFields",
+    "NonExistentTimeError",
     "Parameters",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",
     "Todo",
+    "Transition",
     "TypesFactory",
+    "VTIMEZONEConversionError",
+    "VTIMEZONEInfo",
     "__version__",
     "__version_tuple__",
     "is_utc",

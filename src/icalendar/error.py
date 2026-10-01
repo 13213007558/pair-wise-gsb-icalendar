@@ -79,6 +79,44 @@ class LocalTimezoneMissing(IncompleteAlarmInformation):
     """
 
 
+class VTIMEZONEConversionError(ValueError):
+    """A naive local time cannot be converted with the given policy.
+
+    This is the base class for the errors raised while converting
+    naive local times with a VTIMEZONE definition. Subclasses carry a
+    :class:`~icalendar.LocalTimeDiagnosis` with the candidate offsets
+    and transition information.
+    """
+
+    def __init__(self, message: str, diagnosis: object = None) -> None:
+        super().__init__(message)
+        self.diagnosis = diagnosis
+
+
+class AmbiguousTimeError(VTIMEZONEConversionError):
+    """The local time occurs twice because clocks are set back.
+
+    Use the ``fold`` parameter to choose either of the two candidate
+    offsets or inspect the diagnosis stored on this error.
+    """
+
+
+class NonExistentTimeError(VTIMEZONEConversionError):
+    """The local time never occurs because clocks jump forward.
+
+    Use ``gap="shift-forward"`` to move the local time across the gap
+    or inspect the diagnosis stored on this error.
+    """
+
+
+class InsufficientTimezoneDataError(VTIMEZONEConversionError):
+    """The VTIMEZONE definition does not cover the requested window.
+
+    No default UTC offset is assumed; the VTIMEZONE components have to
+    cover the local time explicitly.
+    """
+
+
 class ComponentEndMissing(IncompleteAlarmInformation):
     """We are missing the end of a component that the alarm is for.
 
