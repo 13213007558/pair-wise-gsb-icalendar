@@ -94,6 +94,16 @@ from icalendar.prop.image import Image
 
 # Switching the timezone provider
 from icalendar.prop.n import NFields
+from icalendar.recurrence import (
+    Diagnostic,
+    DiagnosticKind,
+    Instance,
+    InstanceIterator,
+    InstanceSource,
+    RuleTermination,
+    StopReason,
+    iter_instances,
+)
 from icalendar.timezone import is_utc, use_pytz, use_zoneinfo
 
 from .version import __version__, __version_tuple__, version, version_tuple
@@ -125,6 +135,8 @@ __all__ = [
     "ComponentFactory",
     "ComponentStartMissing",
     "Conference",
+    "Diagnostic",
+    "DiagnosticKind",
     "Event",
     "FeatureWillBeRemovedInFutureVersion",
     "FreeBusy",
@@ -133,6 +145,9 @@ __all__ = [
     "Image",
     "IncompleteAlarmInformation",
     "IncompleteComponent",
+    "Instance",
+    "InstanceIterator",
+    "InstanceSource",
     "InvalidCalendar",
     "JCalParsingError",
     "Journal",
@@ -140,6 +155,8 @@ __all__ = [
     "LocalTimezoneMissing",
     "NFields",
     "Parameters",
+    "RuleTermination",
+    "StopReason",
     "Timezone",
     "TimezoneDaylight",
     "TimezoneStandard",
@@ -148,6 +165,7 @@ __all__ = [
     "__version__",
     "__version_tuple__",
     "is_utc",
+    "iter_instances",
     "q_join",
     "q_split",
     "use_pytz",

@@ -28,6 +28,7 @@ Submodules
    icalendar.error
    icalendar.param
    icalendar.parser_tools
+   icalendar.recurrence
    icalendar.tools
    icalendar.version
 
